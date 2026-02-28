@@ -111,35 +111,35 @@ export function Settings() {
             {/* Platform Integrations */}
             <section>
               <h2 className="text-sm font-semibold text-gray-900 mb-4">Platform Integrations</h2>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="flex flex-col gap-3">
                 {platforms.map(platform => (
-                  <div key={platform.id} className="bg-white border border-[#EAEAEA] rounded-xl p-4 flex flex-col gap-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        {platform.icon}
-                        <span className="font-medium text-gray-900 text-sm">{platform.name}</span>
-                      </div>
+                  <div key={platform.id} className="bg-white border border-[#EAEAEA] rounded-xl p-4 flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-2.5">
+                      {platform.icon}
+                      <span className="font-medium text-gray-900 text-sm">{platform.name}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
                       <div className={`px-2 py-0.5 rounded-full text-[10px] font-medium flex items-center gap-1 ${
                         platform.connected ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
                       }`}>
                         {platform.connected ? <CheckCircle2 className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
                         {platform.connected ? 'Connected' : 'Not Connected'}
                       </div>
+                      <button
+                        onClick={() => togglePlatform(platform.id)}
+                        className={`px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors ${
+                          platform.connected
+                            ? 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200'
+                            : 'bg-purple-600 text-white hover:bg-purple-700'
+                        }`}
+                      >
+                        {platform.connected ? (
+                          <><Link2Off className="w-3.5 h-3.5" /> Disconnect</>
+                        ) : (
+                          <><Link2 className="w-3.5 h-3.5" /> Connect</>
+                        )}
+                      </button>
                     </div>
-                    <button 
-                      onClick={() => togglePlatform(platform.id)}
-                      className={`w-full py-1.5 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
-                        platform.connected 
-                          ? 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200' 
-                          : 'bg-purple-600 text-white hover:bg-purple-700'
-                      }`}
-                    >
-                      {platform.connected ? (
-                        <><Link2Off className="w-3.5 h-3.5" /> Disconnect</>
-                      ) : (
-                        <><Link2 className="w-3.5 h-3.5" /> Connect</>
-                      )}
-                    </button>
                   </div>
                 ))}
               </div>

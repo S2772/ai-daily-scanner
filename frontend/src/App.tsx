@@ -11,15 +11,27 @@ import { Sources } from './components/Sources';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
+  const [selectedHotspotId, setSelectedHotspotId] = useState<string | null>(null);
+  const [selectedOppId, setSelectedOppId] = useState<string | null>(null);
+
+  const navigateToFeed = (hotspotId?: string) => {
+    setActiveTab('feed');
+    setSelectedHotspotId(hotspotId || null);
+  };
+
+  const navigateToDiscover = (oppId?: string) => {
+    setActiveTab('discover');
+    setSelectedOppId(oppId || null);
+  };
 
   const renderContent = () => {
     switch (activeTab) {
       case 'overview':
-        return <Overview setActiveTab={setActiveTab} />;
+        return <Overview setActiveTab={setActiveTab} onSelectHotspot={navigateToFeed} onSelectOpp={navigateToDiscover} />;
       case 'feed':
-        return <NewsFeed />;
+        return <NewsFeed selectedHotspotId={selectedHotspotId} onClearSelection={() => setSelectedHotspotId(null)} />;
       case 'discover':
-        return <OpportunityDiscovery />;
+        return <OpportunityDiscovery setActiveTab={setActiveTab} onSelectHotspot={navigateToFeed} selectedOppId={selectedOppId} onClearSelection={() => setSelectedOppId(null)} />;
       case 'saved':
         return <Saved />;
       case 'notes':
@@ -31,7 +43,7 @@ export default function App() {
       case 'settings':
         return <Settings />;
       default:
-        return <Overview setActiveTab={setActiveTab} />;
+        return <Overview setActiveTab={setActiveTab} onSelectHotspot={navigateToFeed} onSelectOpp={navigateToDiscover} />;
     }
   };
 

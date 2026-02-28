@@ -119,14 +119,14 @@ def init_sources_meta_table(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def fetch_wewe_feed_names() -> Dict[str, str]:
-    """Fetch feed names from WeWe RSS API. Returns {mp_id: name}"""
+def fetch_wewe_feed_info() -> Dict[str, Dict[str, str]]:
+    """Fetch feed names+intros from WeWe RSS API. Returns {mp_id: {name, intro}}"""
     try:
-        resp = requests.get("http://localhost:4000/v1/feeds", timeout=5)
+        resp = requests.get("http://localhost:4000/feeds", timeout=5)
         if resp.status_code == 200:
-            data = resp.json()
-            feeds = data.get("data", {}).get("list", [])
-            return {f["id"]: f.get("name", f["id"]) for f in feeds}
+            feeds = resp.json()
+            if isinstance(feeds, list):
+                return {f["id"]: {"name": f.get("name", f["id"]), "intro": f.get("intro", "")} for f in feeds}
     except Exception:
         pass
     return {}
@@ -139,7 +139,7 @@ def load_all_sources(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
         return []
 
     data = json.loads(sources_file.read_text(encoding="utf-8"))
-    wewe_names = fetch_wewe_feed_names()
+    wewe_info = fetch_wewe_feed_info()
 
     cursor = conn.cursor()
     try:
@@ -173,9 +173,11 @@ def load_all_sources(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
             meta = get_meta(src_id)
             if meta.get("_deleted"):
                 continue
+            info = wewe_info.get(mp_id, {})
             sources.append({
                 "id": src_id, "type": "wechat", "category": "微信公众号",
-                "name": wewe_names.get(mp_id, mp_id), "url": url, "note": "",
+                "name": info.get("name", mp_id), "url": url,
+                "note": info.get("intro", ""),
                 **{k: v for k, v in meta.items() if k != "_deleted"},
             })
         else:
@@ -303,6 +305,9 @@ def json_response(handler: BaseHTTPRequestHandler, status: int, payload: Dict[st
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+    handler.send_header("Access-Control-Allow-Headers", "Content-Type")
     handler.end_headers()
     handler.wfile.write(body)
 
@@ -344,6 +349,13 @@ def serialize_hotspot(row: sqlite3.Row) -> Dict[str, Any]:
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
@@ -367,6 +379,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path == "/api/hotspots":
             self.handle_hotspots(query)
             return
+        if path.startswith("/api/hotspots/"):
+            hotspot_id = path[len("/api/hotspots/"):]
+            if hotspot_id:
+                self.handle_hotspot_detail(hotspot_id)
+                return
         if path == "/api/source-status":
             self.handle_source_status(query)
             return
@@ -608,6 +625,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
             conn.commit()
         conn.close()
         json_response(self, HTTPStatus.OK, {"ok": True, "date": date, "hotspots": hotspots, "generated": generated_count})
+
+    def handle_hotspot_detail(self, hotspot_id: str) -> None:
+        conn = connect_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, title, content, url, source, category, tags, ai_summary, title_zh,
+                   innovation_score, commercial_score, tech_score,
+                   investment_score, total_score, created_at
+            FROM hotspots WHERE id = ?
+            """,
+            (hotspot_id,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+            return
+        json_response(self, HTTPStatus.OK, {"ok": True, "hotspot": serialize_hotspot(row)})
 
     def handle_opportunities(self, query: Dict[str, List[str]]) -> None:
         date = self._query_date(query)
