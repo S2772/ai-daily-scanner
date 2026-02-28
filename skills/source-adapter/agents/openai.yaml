@@ -1,0 +1,4 @@
+interface:
+  display_name: "Source Adapter"
+  short_description: "Implement and maintain source adapters"
+  default_prompt: "Use $source-adapter to add or update a source parser with normalized hotspot output."

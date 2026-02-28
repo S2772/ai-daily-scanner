@@ -1,0 +1,344 @@
+{
+  "version": "2.0",
+  "updated_at": "2026-02-27",
+  "categories": {
+    "ai_general": {
+      "name": "AI General (综合资讯)",
+      "description": "覆盖 AI 领域大部分重要动态，选 1-2 个固定关注即可",
+      "bloggers": [
+        "量子位",
+        "机器之心",
+        "数字生命卡兹克",
+        "赛博禅心",
+        "Agent 橘子",
+        "特工宇宙",
+        "卡尔的AI沃茨",
+        "沃垠 AI",
+        "夕小瑶科技说",
+        "小互AI",
+        "张咋啦"
+      ]
+    },
+    "ai_prompt_agent": {
+      "name": "AI Prompt & Agent",
+      "description": "信息密度极高，重点抓取关于提示词和智能体的内容",
+      "bloggers": [
+        "宝玉AI",
+        "李继刚",
+        "云中江树",
+        "向阳乔木",
+        "一泽",
+        "财猫",
+        "云舒",
+        "甲木",
+        "归藏的 AI 工具箱"
+      ]
+    },
+    "ai_design": {
+      "name": "AI Design (设计与创意)",
+      "description": "对非设计师也很有启发",
+      "bloggers": [
+        "汗青",
+        "海辛和阿文",
+        "闲人一坤",
+        "阿真Irene",
+        "TATALAB",
+        "老秦"
+      ]
+    },
+    "ai_tech": {
+      "name": "AI Tech (技术原理与实操)",
+      "description": "技术含量高但易懂。重点标记：关于 Claude Code 和 Vibe Coding，特别推荐看刘小排的分享",
+      "bloggers": [
+        "艾逗笔",
+        "苍何",
+        "袋鼠帝",
+        "刘聪 NLP",
+        "花叔",
+        "梦飞",
+        "刘小排",
+        "饼干哥哥",
+        "浮之静",
+        "孔某人"
+      ],
+      "highlights": {
+        "刘小排": "Claude Code 和 Vibe Coding 方向特别推荐"
+      }
+    },
+    "ai_product": {
+      "name": "AI Product (产品商业化)",
+      "description": "学习 AI 产品的落地思路和商业化逻辑",
+      "bloggers": [
+        "AI 产品阿颖",
+        "洛小山",
+        "AI 产品银海",
+        "AI产品黄叔",
+        "hanniman",
+        "南瓜博士",
+        "少卿",
+        "小水",
+        "王树义老师",
+        "快刀青衣",
+        "Max"
+      ]
+    },
+    "ai_tutorial": {
+      "name": "AI Tutorial (实操教程)",
+      "description": "风格轻松，跟着做就能出活",
+      "bloggers": [
+        "摸鱼小李",
+        "Rico 有三猫",
+        "栗噔噔",
+        "瓦叔",
+        "AIGC新知",
+        "Loki"
+      ]
+    }
+  },
+  "official_research_blogs": [
+    {
+      "name": "Anthropic Research",
+      "url": "https://www.anthropic.com/research",
+      "note": "写得最好的AI研究博客"
+    },
+    {
+      "name": "OpenAI News",
+      "url": "https://openai.com/news",
+      "note": ""
+    },
+    {
+      "name": "Google DeepMind",
+      "url": "https://deepmind.google/research/publications",
+      "note": ""
+    },
+    {
+      "name": "Meta AI Blog",
+      "url": "https://ai.meta.com/blog",
+      "note": ""
+    }
+  ],
+  "cn_model_labs": [
+    {
+      "name": "Qwen 博客",
+      "url": "https://qwenlm.github.io/blog/",
+      "note": "阿里通义千问"
+    },
+    {
+      "name": "Seed 字节跳动",
+      "url": "https://seed.bytedance.com",
+      "note": "字节跳动AI研究"
+    },
+    {
+      "name": "腾讯混元",
+      "type": "wechat",
+      "note": "关注公众号"
+    },
+    {
+      "name": "Kimi (月之暗面)",
+      "type": "wechat",
+      "note": "关注公众号"
+    },
+    {
+      "name": "智谱AI",
+      "type": "wechat",
+      "note": "关注公众号"
+    },
+    {
+      "name": "DeepSeek",
+      "type": "wechat",
+      "note": "关注公众号"
+    }
+  ],
+  "thought_leaders": {
+    "tech_giants": [
+      {
+        "name": "Yoshua Bengio",
+        "note": "图灵奖三巨头"
+      },
+      {
+        "name": "Geoffrey Hinton",
+        "note": "图灵奖三巨头，AI末日派"
+      },
+      {
+        "name": "Yann LeCun",
+        "note": "图灵奖三巨头，AI乐观派"
+      },
+      {
+        "name": "李飞飞",
+        "note": ""
+      },
+      {
+        "name": "吴恩达 (Andrew Ng)",
+        "note": ""
+      },
+      {
+        "name": "Ilya Sutskever",
+        "note": ""
+      },
+      {
+        "name": "梁文锋",
+        "note": "DeepSeek 背后的人，很少接受采访，技术路线本身就是最好的表达"
+      }
+    ],
+    "business_leaders": [
+      {
+        "name": "Sam Altman",
+        "note": "观点要带滤镜看，主要看把钱投到了哪里"
+      },
+      {
+        "name": "马斯克 (Elon Musk)",
+        "note": "观点要带滤镜看"
+      },
+      {
+        "name": "黄仁勋 (Jensen Huang)",
+        "note": "观点要带滤镜看"
+      },
+      {
+        "name": "扎克伯格 (Mark Zuckerberg)",
+        "note": "观点要带滤镜看"
+      },
+      {
+        "name": "李彦宏",
+        "note": "观点要带滤镜看"
+      }
+    ]
+  },
+  "podcasts_and_platforms": [
+    {
+      "name": "Lex Fridman",
+      "url": "https://www.youtube.com/@lexfridman",
+      "note": "长对话有真正的深度"
+    },
+    {
+      "name": "20VC",
+      "url": "",
+      "note": "偏投资和商业视角"
+    },
+    {
+      "name": "Founder Park",
+      "type": "wechat",
+      "note": ""
+    },
+    {
+      "name": "十字路口 CrossingX",
+      "url": "https://x.com",
+      "note": "原 Twitter"
+    },
+    {
+      "name": "Reddit",
+      "url": "https://www.reddit.com/",
+      "note": "越狱提示词、时髦玩法的发源地"
+    }
+  ],
+  "industry_analysis": [
+    {
+      "name": "The Information",
+      "note": "产业分析标配源"
+    },
+    {
+      "name": "TechCrunch",
+      "note": "产业分析标配源"
+    }
+  ],
+  "investment_institutions": [
+    {
+      "name": "红杉资本 (Sequoia Capital)",
+      "url": "https://sequoiacap.com",
+      "note": "资本的流向，是预判未来最诚实的信号"
+    },
+    {
+      "name": "a16z",
+      "url": "https://a16z.com",
+      "note": "每年发布的《State of AI》报告是行业必读"
+    },
+    {
+      "name": "Y Combinator",
+      "url": "https://ycombinator.com",
+      "note": "每期批次里 AI 项目的比例就是行业温度计"
+    },
+    {
+      "name": "奇绩创坛",
+      "url": "https://miracleplus.com",
+      "note": "陆奇创办的，中国版 YC"
+    }
+  ],
+  "rss_feeds": [
+    "https://arxiv.org/rss/cs.AI",
+    "https://news.ycombinator.com/rss",
+    "https://www.reddit.com/r/MachineLearning/.rss",
+    "https://www.anthropic.com/rss.xml",
+    "https://blog.openai.com/rss/",
+    "https://techcrunch.com/category/artificial-intelligence/feed/",
+    "https://36kr.com/feed",
+    "https://sspai.com/feed",
+    "http://localhost:4000/feeds/MP_WXS_3251517810.atom",
+    "http://localhost:4000/feeds/MP_WXS_3540975510.atom",
+    "http://localhost:4000/feeds/MP_WXS_3236757533.atom",
+    "http://localhost:4000/feeds/MP_WXS_3073282833.atom",
+    "http://localhost:4000/feeds/MP_WXS_3223096120.atom",
+    "http://localhost:4000/feeds/MP_WXS_3934419561.atom",
+    "http://localhost:4000/feeds/MP_WXS_3903697567.atom",
+    "http://localhost:4000/feeds/MP_WXS_3871977637.atom",
+    "http://localhost:4000/feeds/MP_WXS_3621654047.atom",
+    "http://localhost:4000/feeds/MP_WXS_3201599457.atom",
+    "http://localhost:4000/feeds/MP_WXS_3207765945.atom",
+    "http://localhost:4000/feeds/MP_WXS_3931721816.atom",
+    "http://localhost:4000/feeds/MP_WXS_3957812448.atom",
+    "http://localhost:4000/feeds/MP_WXS_3913757353.atom",
+    "http://localhost:4000/feeds/MP_WXS_3016599109.atom",
+    "http://localhost:4000/feeds/MP_WXS_3008229483.atom",
+    "http://localhost:4000/feeds/MP_WXS_3234547650.atom",
+    "http://localhost:4000/feeds/MP_WXS_3915551678.atom",
+    "http://localhost:4000/feeds/MP_WXS_3225155038.atom",
+    "http://localhost:4000/feeds/MP_WXS_3916643350.atom",
+    "http://localhost:4000/feeds/MP_WXS_3895843617.atom",
+    "http://localhost:4000/feeds/MP_WXS_3236770276.atom",
+    "http://localhost:4000/feeds/MP_WXS_3910637539.atom",
+    "http://localhost:4000/feeds/MP_WXS_3917638807.atom",
+    "http://localhost:4000/feeds/MP_WXS_3990616823.atom",
+    "http://localhost:4000/feeds/MP_WXS_2399167584.atom",
+    "http://localhost:4000/feeds/MP_WXS_3544989962.atom",
+    "http://localhost:4000/feeds/MP_WXS_3585152880.atom",
+    "http://localhost:4000/feeds/MP_WXS_3903186594.atom",
+    "http://localhost:4000/feeds/MP_WXS_3891555159.atom",
+    "http://localhost:4000/feeds/MP_WXS_3869059014.atom",
+    "http://localhost:4000/feeds/MP_WXS_3926276460.atom",
+    "http://localhost:4000/feeds/MP_WXS_2394281674.atom",
+    "http://localhost:4000/feeds/MP_WXS_3293993092.atom",
+    "http://localhost:4000/feeds/MP_WXS_3236165275.atom",
+    "http://localhost:4000/feeds/MP_WXS_3940569956.atom",
+    "http://localhost:4000/feeds/MP_WXS_3892772220.atom",
+    "http://localhost:4000/feeds/MP_WXS_3509716326.atom",
+    "http://localhost:4000/feeds/MP_WXS_3913528478.atom",
+    "http://localhost:4000/feeds/MP_WXS_2398553439.atom",
+    "http://localhost:4000/feeds/MP_WXS_2397099000.atom",
+    "http://localhost:4000/feeds/MP_WXS_3082390246.atom",
+    "http://localhost:4000/feeds/MP_WXS_3228253624.atom",
+    "http://localhost:4000/feeds/MP_WXS_2397759220.atom",
+    "http://localhost:4000/feeds/MP_WXS_3885888086.atom",
+    "http://localhost:4000/feeds/MP_WXS_2396422154.atom",
+    "http://localhost:4000/feeds/MP_WXS_3927644787.atom",
+    "http://localhost:4000/feeds/MP_WXS_3099231158.atom",
+    "http://localhost:4000/feeds/MP_WXS_3509712264.atom",
+    "http://localhost:4000/feeds/MP_WXS_3536714702.atom",
+    "http://localhost:4000/feeds/MP_WXS_3919587129.atom",
+    "http://localhost:4000/feeds/MP_WXS_3964866055.atom",
+    "http://localhost:4000/feeds/MP_WXS_3293454745.atom",
+    "http://localhost:4000/feeds/MP_WXS_3933490096.atom",
+    "http://localhost:4000/feeds/MP_WXS_3263867436.atom",
+    "http://localhost:4000/feeds/MP_WXS_3639138360.atom"
+  ],
+  "twitter_profiles": [
+    "karpathy",
+    "ylecun",
+    "AndrewYNg",
+    "sama",
+    "iaboringai",
+    "lexfridman"
+  ],
+  "usage_tips": {
+    "official_blogs": "每周花20分钟扫一遍标题，不需要每篇精读",
+    "thought_leaders": "巨头间的互相怼和争论非常有营养",
+    "business_leaders": "观点要带滤镜看，主要看他们把钱投到了哪里"
+  }
+}

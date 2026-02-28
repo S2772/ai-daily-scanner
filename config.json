@@ -1,0 +1,52 @@
+{
+  "system": {
+    "name": "AI热点日报系统",
+    "version": "1.0.0",
+    "author": "AI Assistant",
+    "description": "本地运行的AI热点信息收集与分析系统"
+  },
+  "database": {
+    "path": "data/ai_hotspots.db",
+    "backup_enabled": true,
+    "backup_interval_days": 7
+  },
+  "scraper": {
+    "update_interval_hours": 24,
+    "max_items_per_source": 20,
+    "request_timeout_seconds": 10,
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  },
+  "scoring": {
+    "weights": {
+      "innovation": 0.3,
+      "commercial": 0.3,
+      "technology": 0.2,
+      "investment": 0.2
+    },
+    "max_score": 10
+  },
+  "opportunities": {
+    "min_hotspots_for_analysis": 3,
+    "max_opportunities_per_day": 10,
+    "score_threshold": 60
+  },
+  "export": {
+    "default_format": "markdown",
+    "output_directory": "reports",
+    "include_statistics": true,
+    "include_opportunities": true
+  },
+  "ui": {
+    "default_items_per_page": 20,
+    "show_scores": true,
+    "show_tags": true,
+    "color_enabled": true
+  },
+  "features": {
+    "notes_enabled": true,
+    "search_enabled": true,
+    "export_enabled": true,
+    "statistics_enabled": true,
+    "opportunity_mining_enabled": true
+  }
+}

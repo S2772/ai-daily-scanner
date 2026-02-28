@@ -1,0 +1,4 @@
+interface:
+  display_name: "Report Quality Gate"
+  short_description: "Gate report generation on data quality"
+  default_prompt: "Use $report-quality-gate to enforce report pass/fail checks before export."

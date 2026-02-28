@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>前端功能测试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .test-section {
+            margin: 30px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .test-result {
+            background: #f8f9fa;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .success {
+            border-left: 4px solid #28a745;
+            background: #d4edda;
+        }
+        .warning {
+            border-left: 4px solid #ffc107;
+            background: #fff3cd;
+        }
+        .error {
+            border-left: 4px solid #dc3545;
+            background: #f8d7da;
+        }
+        .hotspot-card {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+            background: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .summary {
+            color: #666;
+            font-size: 14px;
+            margin: 10px 0;
+        }
+        .translation {
+            color: #007bff;
+            font-style: italic;
+            font-size: 13px;
+            margin-top: 5px;
+        }
+        .language-tag {
+            display: inline-block;
+            background: #6c757d;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            margin-left: 5px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            overflow: auto;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>AI热点日报系统 - 前端功能测试</h1>
+    <p>测试修改后的摘要和翻译功能</p>
+    
+    <div class="test-section">
+        <h2>测试1: 从服务器获取真实数据</h2>
+        <button onclick="loadHotspots()">加载热点数据</button>
+        <button onclick="loadOpportunities()">加载机会数据</button>
+        
+        <div id="data-status" class="test-result">
+            点击按钮加载数据...
+        </div>
+        
+        <div id="hotspots-container" style="display: none;">
+            <h3>热点数据示例</h3>
+            <div id="hotspot-examples"></div>
+        </div>
+        
+        <div id="opportunities-container" style="display: none;">
+            <h3>机会数据示例</h3>
+            <div id="opportunity-examples"></div>
+        </div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试2: 智能摘要功能</h2>
+        <div class="test-result">
+            <p><strong>测试用例1 (英文内容):</strong></p>
+            <pre id="english-content-test"></pre>
+            <p><strong>生成摘要:</strong> <span id="english-summary-result"></span></p>
+            
+            <p><strong>测试用例2 (中文内容):</strong></p>
+            <pre id="chinese-content-test"></pre>
+            <p><strong>生成摘要:</strong> <span id="chinese-summary-result"></span></p>
+        </div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试3: 中文翻译功能</h2>
+        <div class="test-result">
+            <p><strong>测试用例1 (英文标题):</strong> "PreScience: A Benchmark for Forecasting Scientific Contributions"</p>
+            <p><strong>中文翻译:</strong> <span id="english-translation-result"></span></p>
+            
+            <p><strong>测试用例2 (中文标题):</strong> "谷歌发布新一代AI芯片"</p>
+            <p><strong>处理结果:</strong> <span id="chinese-translation-result"></span></p>
+        </div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试4: 模拟热点卡片渲染</h2>
+        <div id="simulated-hotspot-cards" class="test-result">
+            <!-- 这里会动态生成模拟的热点卡片 -->
+        </div>
+    </div>
+
+    <script>
+        // 从dashboard.js复制相关函数
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        function getChineseTranslation(text) {
+            if (!text) return '暂无翻译';
+            
+            // 如果已经是中文，不需要翻译
+            if (/[\u4e00-\u9fff]/.test(text)) {
+                return text; // 返回原文本，因为已经是中文
+            }
+            
+            // 简单的翻译映射表（实际应用中应该使用翻译API）
+            const translations = {
+                'GPT-5': 'GPT-5（第五代生成式预训练模型）',
+                'OpenAI': 'OpenAI（人工智能研究公司）',
+                'AI': '人工智能',
+                'machine learning': '机器学习',
+                'deep learning': '深度学习',
+                'neural network': '神经网络',
+                'computer vision': '计算机视觉',
+                'natural language processing': '自然语言处理',
+                'NLP': '自然语言处理',
+                'LLM': '大语言模型',
+                'multimodal': '多模态',
+                'startup': '初创公司',
+                'funding': '融资',
+                'investment': '投资',
+                'venture capital': '风险投资',
+                'product launch': '产品发布',
+                'technology breakthrough': '技术突破',
+                'open source': '开源',
+                'hardware': '硬件',
+                'market opportunity': '市场机会',
+                'Google': '谷歌',
+                'Microsoft': '微软',
+                'Meta': 'Meta（原Facebook）',
+                'NVIDIA': '英伟达',
+                'DeepMind': 'DeepMind（谷歌旗下AI公司）',
+                'reinforcement learning': '强化学习',
+                'generative AI': '生成式人工智能',
+                'transformer': 'Transformer模型',
+                'diffusion model': '扩散模型',
+                'autonomous driving': '自动驾驶',
+                'robotics': '机器人技术',
+                'quantum computing': '量子计算',
+                'edge computing': '边缘计算',
+                'cloud computing': '云计算',
+                'big data': '大数据',
+                'data mining': '数据挖掘',
+                'computer science': '计算机科学',
+                'software engineering': '软件工程',
+                'algorithm': '算法',
+                'optimization': '优化',
+                'benchmark': '基准测试',
+                'performance': '性能',
+                'efficiency': '效率',
+                'accuracy': '准确率',
+                'precision': '精确率',
+                'recall': '召回率',
+                'F1 score': 'F1分数',
+                'forecasting': '预测',
+                'scientific': '科学',
+                'contributions': '贡献',
+                'benchmark': '基准测试',
+                'arxiv': 'arXiv预印本',
+                'announce': '宣布',
+                'type': '类型',
+                'abstract': '摘要',
+                'systems': '系统',
+                'trained': '训练',
+                'record': '记录',
+                'can': '能够',
+                'predict': '预测',
+                'future': '未来',
+                'impact': '影响',
+                'research': '研究',
+                'papers': '论文',
+                'introduce': '介绍',
+                'prescience': '预科学',
+                'first': '首个',
+                'large-scale': '大规模',
+                'evaluation': '评估',
+                'framework': '框架',
+                'designed': '设计',
+                'specifically': '专门',
+                'task': '任务',
+                'paper': '论文',
+                'will': '将',
+                'have': '有',
+                'on': '在',
+                'the': '',
+                'a': '一个',
+                'an': '一个',
+                'and': '和',
+                'or': '或',
+                'for': '为',
+                'to': '到',
+                'in': '在',
+                'of': '的',
+                'with': '具有',
+                'by': '通过',
+                'at': '在',
+                'from': '从',
+                'as': '作为',
+                'into': '进入',
+                'through': '通过',
+                'during': '在...期间',
+                'including': '包括',
+                'within': '在...内',
+                'without': '没有',
+                'under': '在...下',
+                'over': '超过',
+                'between': '在...之间',
+                'among': '在...之中',
+                'throughout': '贯穿',
+                'against': '反对',
+                'toward': '朝向',
+                'upon': '在...上',
+                'about': '关于',
+                'like': '像',
+                'through': '通过',
+                'after': '之后',
+                'before': '之前',
+                'since': '自从',
+                'while': '当...时',
+                'where': '哪里',
+                'why': '为什么',
+                'how': '如何',
+                'what': '什么',
+                'which': '哪个',
+                'who': '谁',
+                'whom': '谁',
+                'whose': '谁的',
+                'when': '何时',
+                'new': '新的',
+                'old': '旧的',
+                'good': '好的',
+                'bad': '坏的',
+                'big': '大的',
+                'small': '小的',
+                'high': '高的',
+                'low': '低的',
+                'long': '长的',
+                'short': '短的',
+                'fast': '快的',
+                'slow': '慢的',
+                'hard': '硬的',
+                'soft': '软的',
+                'hot': '热的',
+                'cold': '冷的',
+                'young': '年轻的',
+                'old': '年老的',
+                'rich': '富有的',
+                'poor': '贫穷的',
+                'strong': '强大的',
+                'weak': '弱小的',
+                'heavy': '重的',
+                'light': '轻的',
+                'dark': '黑暗的',
+                'bright': '明亮的',
+                'clean': '干净的',
+                'dirty': '脏的',
+                'dry': '干燥的',
+                'wet': '湿润的',
+                'sweet': '甜的',
+                'sour': '酸的',
+                'bitter': '苦的',
+                'salty': '咸的',
+                'spicy': '辣的'
+            };
+            
+            // 检查是否有直接匹配
+            const lowerText = text.toLowerCase();
+            let translatedText = text;
+            
+            // 首先尝试完整匹配
+            for (const [key, value] of Object.entries(translations)) {
+                const regex = new RegExp(`\\b${key.toLowerCase()}\\b`, 'gi');
+                if (regex.test(lowerText)) {
+                    translatedText = translatedText.replace(regex, value);
+                }
+            }
+            
+            // 如果翻译后文本有变化，返回翻译结果
+            if (translatedText !== text) {
+                return translatedText;
+            }
+            
+            // 如果没有匹配，尝试提取主要名词进行翻译
+            const words = text.split(/[\s\-_]+/);
+            let translatedWords = [];
+            
+            for (const word of words) {
+                if (word.length > 1) { // 只处理长度大于1的单词
+                    const lowerWord = word.toLowerCase();
+                    let translated = false;
+                    
+                    for (const [key, value] of Object.entries(translations)) {
+                        if (lowerWord === key.toLowerCase()) {
+                            translatedWords.push(value);
+                            translated = true;
+                            break;
+                        }
+                    }
+                    
+                    if (!translated) {
+                        translatedWords.push(word);
+                    }
+                } else {
+                    translatedWords.push(word);
+                }
+            }
+            
+            const result = translatedWords.join(' ');
+            return result !== text ? result : '（中文翻译待完善）';
+        }
+        
+        // 智能摘要函数：根据内容语言生成摘要
+        function generateSmartSummary(content, maxLength = 120) {
+            if (!content) return '';
+            
+            // 检测内容语言（简单检测：是否包含中文字符）
+            const isChinese = /[\u4e00-\u9fff]/.test(content);
+            
+            // 如果内容长度合适，直接返回
+            if (content.length <= maxLength) {
+                return content + (isChinese ? '' : ' (英文)');
+            }
+            
+            if (isChinese) {
+                // 中文内容：尝试找到句号、问号、感叹号等标点作为句子边界
+                const sentenceEndings = /[。！？]/;
+                const sentences = content.split(sentenceEndings).filter(s => s.trim().length > 0);
+                
+                if (sentences.length > 0) {
+                    // 返回第一个完整的句子
+                    const firstSentence = sentences[0].trim();
+                    if (firstSentence.length <= maxLength) {
+                        return firstSentence + (firstSentence.length < content.length ? '...' : '');
+                    }
+                }
+            } else {
+                // 英文内容：尝试找到句号、问号、感叹号等标点作为句子边界
+                const sentenceEndings = /[.!?]/;
+                const sentences = content.split(sentenceEndings).filter(s => s.trim().length > 0);
+                
+                if (sentences.length > 0) {
+                    // 返回第一个完整的句子
+                    const firstSentence = sentences[0].trim();
+                    if (firstSentence.length <= maxLength) {
+                        return firstSentence + (firstSentence.length < content.length ? '...' : '') + ' (英文)';
+                    }
+                }
+            }
+            
+            // 如果没有找到合适的句子边界，简单截取
+            const summary = content.slice(0, maxLength) + '...';
+            return isChinese ? summary : summary + ' (英文)';
+        }
+        
+        // 测试函数
+        function runTests() {
+            // 测试智能摘要
+            const englishContent = "arXiv:2602.20459v1 Announce Type: new Abstract: Can AI systems trained on the scientific record up to a certain year predict which papers will have high impact in the future?";
+            const chineseContent = "OpenAI今天发布了GPT-5，支持文本、图像、音频的多模态理解，在多项基准测试中刷新记录。该模型在自然语言处理、计算机视觉和语音识别等多个领域都表现出色。";
+            
+            document.getElementById('english-content-test').textContent = englishContent;
+            document.getElementById('chinese-content-test').textContent = chineseContent;
+            
+            const englishSummary = generateSmartSummary(englishContent, 120);
+            const chineseSummary = generateSmartSummary(chineseContent, 120);
+            
+            document.getElementById('english-summary-result').textContent = englishSummary;
+            document.getElementById('chinese-summary-result').textContent = chineseSummary;
+            
+            // 测试翻译
+            const englishTitle = "PreScience: A Benchmark for Forecasting Scientific Contributions";
+            const chineseTitle = "谷歌发布新一代AI芯片";
+            
+            const englishTranslation = getChineseTranslation(englishTitle);
+            const chineseTranslation = getChineseTranslation(chineseTitle);
+            
+            document.getElementById('english-translation-result').textContent = englishTranslation;
+            document.getElementById('chinese-translation-result').textContent = chineseTranslation;
+            
+            // 模拟热点卡片
+            simulateHotspotCards();
+        }
+        
+        // 模拟热点卡片渲染
+        function simulateHotspotCards() {
+            const container = document.getElementById('simulated-hotspot-cards');
+            
+            // 模拟数据
+            const hotspots = [
+                {
+                    id: 'test_001',
+                    title: 'PreScience: A Benchmark for Forecasting Scientific Contributions',
+                    content: 'arXiv:2602.20459v1 Announce Type: new Abstract: Can AI systems trained on the scientific record up to a certain year predict which papers will have high impact in the future?',
+                    category: '技术突破',
+                    tags: ['AI预测', '科学研究']
+                },
+                {
+                    id: 'test_002',
+                    title: 'OpenAI发布新一代多模态模型GPT-5',
+                    content: 'OpenAI今天发布了GPT-5，支持文本、图像、音频的多模态理解，在多项基准测试中刷新记录。该模型在自然语言处理、计算机视觉和语音识别等多个领域都表现出色。',
+                    category: '产品发布',
+                    tags: ['大语言模型', '多模态']
+                }
+            ];
+            
+            let html = '';
+            
+            hotspots.forEach(hotspot => {
+                const isChineseTitle = /[\u4e00-\u9fff]/.test(hotspot.title);
+                const translation = !isChineseTitle ? getChineseTranslation(hotspot.title) : null;
+                const summary = generateSmartSummary(hotspot.content, 120);
+                
+                html += `
+                    <div class="hotspot-card">
+                        <h4>${escapeHtml(hotspot.title)}</h4>
+                        ${translation ? `<div class="translation">中文翻译：${escapeHtml(translation)}</div>` : ''}
+                        <div class="summary">${escapeHtml(summary)}</div>
+                        <div>
+                            <span class="language-tag">${isChineseTitle ? '中文' : '英文'}</span>
+                            <span class="language-tag">${hotspot.category}</span>
+                            ${hotspot.tags.map(tag => `<span class="language-tag">${escapeHtml(tag)}</span>`).join(' ')}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html;
+        }
+        
+        // 从服务器加载数据
+        async function loadHotspots() {
+            const statusDiv = document.getElementById('data-status');
+            statusDiv.className = 'test-result warning';
+            statusDiv.textContent = '正在加载热点数据...';
+            
+            try {
+                const response = await fetch('http://127.0.0.1:6003/api/hotspots');
+                const data = await response.json();
+                
+                statusDiv.className = 'test-result success';
+                statusDiv.innerHTML = `✅ 成功加载 ${data.hotspots.length} 个热点`;
+                
+                // 显示示例
+                const container = document.getElementById('hotspot-examples');
+                const examples = data.hotspots.slice(0, 3);
+                
+                let html = '';
+                examples.forEach((hotspot, index) => {
+                    const isChineseTitle = /[\u4e00-\u9fff]/.test(hotspot.title);
+                    const translation = !isChineseTitle ? getChineseTranslation(hotspot.title) : null;
+                    const summary = generateSmartSummary(hotspot.content, 100);
+                    
+                    html += `
+                        <div class="hotspot-card">
+                            <h4>${escapeHtml(hotspot.title)}</h4>
+                            ${translation ? `<div class="translation">中文翻译：${escapeHtml(translation)}</div>` : ''}
+                            <div class="summary">${escapeHtml(summary)}</div>
+                            <div>
+                                <span class="language-tag">${isChineseTitle ? '中文' : '英文'}</span>
+                                <span class="language-tag">${escapeHtml(hotspot.category || '未分类')}</span>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                container.innerHTML = html;
+                document.getElementById('hotspots-container').style.display = 'block';
+                
+            } catch (error) {
+                statusDiv.className = 'test-result error';
+                statusDiv.textContent = `❌ 加载失败: ${error.message}`;
+            }
+        }
+        
+        async function loadOpportunities() {
+            const statusDiv = document.getElementById('data-status');
+            statusDiv.className = 'test-result warning';
+            statusDiv.textContent = '正在加载机会数据...';
+            
+            try {
+                const response = await fetch('http://127.0.0.1:6003/api/opportunities');
+                const data = await response.json();
+                
+                statusDiv.className = 'test-result success';
+                statusDiv.innerHTML = `✅ 成功加载 ${data.opportunities.length} 个机会`;
+                
+                // 显示示例
+                const container = document.getElementById('opportunity-examples');
+                const examples = data.opportunities.slice(0, 2);
+                
+                let html = '';
+                examples.forEach((opportunity, index) => {
+                    const isChineseTitle = /[\u4e00-\u9fff]/.test(opportunity.title);
+                    const translation = !isChineseTitle ? getChineseTranslation(opportunity.title) : null;
+                    const summary = generateSmartSummary(opportunity.description, 80);
+                    
+                    html += `
+                        <div class="hotspot-card">
+                            <h4>${escapeHtml(opportunity.title)}</h4>
+                            ${translation ? `<div class="translation">中文翻译：${escapeHtml(translation)}</div>` : ''}
+                            <div class="summary">${escapeHtml(summary)}</div>
+                            <div>
+                                <span class="language-tag">潜力评分: ${opportunity.potential_score || 'N/A'}</span>
+                                <span class="language-tag">创新度: ${opportunity.innovation_score || 'N/A'}</span>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                container.innerHTML = html;
+                document.getElementById('opportunities-container').style.display = 'block';
+                
+            } catch (error) {
+                statusDiv.className = 'test-result error';
+                statusDiv.textContent = `❌ 加载失败: ${error.message}`;
+            }
+        }
+        
+        // 页面加载完成后运行测试
+        document.addEventListener('DOMContentLoaded', function() {
+            runTests();
+        });
+    </script>
+</body>
+</html>

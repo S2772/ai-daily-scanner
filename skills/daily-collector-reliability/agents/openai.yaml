@@ -1,0 +1,4 @@
+interface:
+  display_name: "Collector Reliability"
+  short_description: "Harden collection and freshness reliability"
+  default_prompt: "Use $daily-collector-reliability to make daily collection results reliable and failure-aware."

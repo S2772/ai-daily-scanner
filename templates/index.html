@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI热点日报 · 智能看板</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+</head>
+<body>
+  <!-- 侧边导航栏 -->
+  <nav class="sidebar-nav">
+    <div class="nav-header">
+      <div class="logo">
+        <i class="fas fa-bolt"></i>
+        <span>AI热点日报</span>
+      </div>
+    </div>
+
+    <div class="nav-menu">
+      <a href="#overview" class="nav-item active" data-page="overview">
+        <i class="fas fa-chart-line"></i>
+        <span>总览</span>
+      </a>
+      <a href="#hotspots" class="nav-item" data-page="hotspots">
+        <i class="fas fa-fire"></i>
+        <span>热点</span>
+      </a>
+      <a href="#opportunities" class="nav-item" data-page="opportunities">
+        <i class="fas fa-gem"></i>
+        <span>机会</span>
+      </a>
+    </div>
+
+    <div class="nav-footer">
+      <button id="collect-btn" class="nav-action-btn">
+        <i class="fas fa-sync-alt"></i>
+        <span>收集数据</span>
+      </button>
+      <div class="date-selector">
+        <i class="fas fa-calendar-alt"></i>
+        <input id="date-input" type="date" value="__TODAY__">
+      </div>
+    </div>
+  </nav>
+
+  <!-- 主内容区域 -->
+  <main class="main-content">
+    <!-- 总览页面 -->
+    <div id="overview-page" class="page active">
+      <div class="page-header">
+        <h1>数据总览</h1>
+        <p class="subtitle">AI领域热点与机会分析</p>
+      </div>
+
+      <!-- 日期范围选择 -->
+      <div class="date-range-selector glass" style="padding: var(--space-lg); border-radius: var(--radius-xl); margin-bottom: var(--space-xl); display: flex; gap: var(--space-lg); align-items: center; flex-wrap: wrap;">
+        <div style="display: flex; align-items: center; gap: var(--space-md);">
+          <label style="font-size: 14px; font-weight: 600; color: var(--color-text-secondary);">查看数据：</label>
+          <select id="date-range-select" style="padding: var(--space-sm) var(--space-md); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); color: var(--color-text-primary); font-size: 14px; cursor: pointer; outline: none;">
+            <option value="today">今天</option>
+            <option value="yesterday">昨天</option>
+            <option value="7days">最近7天</option>
+            <option value="30days">最近30天</option>
+            <option value="custom">自定义日期</option>
+          </select>
+        </div>
+        <div id="custom-date-range" style="display: none; gap: var(--space-md); align-items: center;">
+          <input type="date" id="start-date" style="padding: var(--space-sm) var(--space-md); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); color: var(--color-text-primary); font-size: 14px; cursor: pointer; outline: none;">
+          <span style="color: var(--color-text-secondary);">至</span>
+          <input type="date" id="end-date" style="padding: var(--space-sm) var(--space-md); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); color: var(--color-text-primary); font-size: 14px; cursor: pointer; outline: none;">
+          <button id="apply-date-range" class="action-btn primary" style="padding: var(--space-sm) var(--space-lg);">应用</button>
+        </div>
+      </div>
+
+      <!-- 统计卡片 -->
+      <div class="stats-grid">
+        <div class="stat-card glass">
+          <div class="stat-icon fire">
+            <i class="fas fa-fire"></i>
+          </div>
+          <div class="stat-content">
+            <div class="stat-value" id="total-hotspots">0</div>
+            <div class="stat-label">今日热点</div>
+            <div class="stat-trend">
+              <i class="fas fa-arrow-up"></i>
+              <span>较昨日 +0%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="stat-card glass">
+          <div class="stat-icon gem">
+            <i class="fas fa-gem"></i>
+          </div>
+          <div class="stat-content">
+            <div class="stat-value" id="total-opportunities">0</div>
+            <div class="stat-label">发现机会</div>
+            <div class="stat-trend">
+              <i class="fas fa-arrow-up"></i>
+              <span>较昨日 +0%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="stat-card glass">
+          <div class="stat-icon star">
+            <i class="fas fa-star"></i>
+          </div>
+          <div class="stat-content">
+            <div class="stat-value" id="avg-score">0.0</div>
+            <div class="stat-label">平均评分</div>
+            <div class="stat-trend">
+              <i class="fas fa-arrow-up"></i>
+              <span>较昨日 +0%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="stat-card glass">
+          <div class="stat-icon chart">
+            <i class="fas fa-chart-bar"></i>
+          </div>
+          <div class="stat-content">
+            <div class="stat-value" id="total-sources">0</div>
+            <div class="stat-label">数据来源</div>
+            <div class="stat-trend">
+              <i class="fas fa-check-circle"></i>
+              <span>全部正常</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 图表区域 -->
+      <div class="charts-grid">
+        <div class="chart-card glass">
+          <div class="chart-header">
+            <h3>热点趋势</h3>
+            <div class="chart-actions">
+              <button class="chart-btn">7天</button>
+              <button class="chart-btn active">30天</button>
+            </div>
+          </div>
+          <div class="chart-content" id="trend-chart">
+            <canvas id="trendCanvas"></canvas>
+          </div>
+        </div>
+
+        <div class="chart-card glass">
+          <div class="chart-header">
+            <h3>分类分布</h3>
+          </div>
+          <div class="chart-content" id="category-chart">
+            <canvas id="categoryCanvas"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- 热力图 -->
+      <div class="heatmap-card glass">
+        <div class="chart-header">
+          <h3>活跃热力图</h3>
+            <p class="chart-subtitle">过去30天的数据活跃度</p>
+        </div>
+        <div class="heatmap-content" id="heatmap">
+          <!-- 热力图将由JS生成 -->
+        </div>
+      </div>
+
+      <!-- 热点对比分析 -->
+      <div class="preview-section">
+        <div class="section-header">
+          <h3>热点对比分析</h3>
+          <button class="view-all-btn" id="select-compare-btn" style="cursor: pointer; background: none; border: none; color: var(--color-primary); font-size: 15px; font-weight: 500;">
+            <i class="fas fa-plus"></i> 选择对比
+          </button>
+        </div>
+        <div class="comparison-container glass" id="comparison-view" style="padding: var(--space-xl); border-radius: var(--radius-xl); min-height: 200px;">
+          <p style="color: var(--color-text-secondary); text-align: center; padding: 2rem;">点击"选择对比"按钮选择要对比的热点</p>
+        </div>
+      </div>
+
+      <!-- 最新热点预览 -->
+      <div class="preview-section">
+        <div class="section-header">
+          <h3>最新热点</h3>
+          <a href="#hotspots" class="view-all-btn">查看全部 <i class="fas fa-arrow-right"></i></a>
+        </div>
+        <div class="preview-grid" id="latest-hotspots">
+          <!-- 动态加载 -->
+        </div>
+      </div>
+    </div>
+
+    <!-- 热点列表页面 -->
+    <div id="hotspots-page" class="page">
+      <div class="page-header">
+        <h1>热点列表</h1>
+        <div class="page-actions">
+          <div class="search-box glass">
+            <i class="fas fa-search"></i>
+            <input type="text" id="hotspots-search" placeholder="搜索热点...">
+          </div>
+          <button class="action-btn glass" id="manage-tags-btn" title="管理自定义标签">
+            <i class="fas fa-tags"></i>
+            <span>标签管理</span>
+          </button>
+          <button class="action-btn glass" id="export-hotspots">
+            <i class="fas fa-download"></i>
+            <span>导出</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 筛选器 -->
+      <div class="filters-bar glass">
+        <div class="filter-group">
+          <label>来源</label>
+          <div id="source-filters" class="filter-tags">
+            <button class="filter-tag active" data-source="all">全部</button>
+            <button class="filter-tag" data-source="twitter">🐦 Twitter</button>
+            <button class="filter-tag" data-source="rss">📰 RSS</button>
+            <button class="filter-tag" data-source="blog">📝 博客</button>
+          </div>
+        </div>
+        <div class="filter-group">
+          <label>分类</label>
+          <div id="category-filters" class="filter-tags">
+            <!-- 动态生成 -->
+          </div>
+        </div>
+        <div class="filter-group">
+          <label>标签</label>
+          <div id="tag-filters" class="filter-tags">
+            <!-- 动态生成 -->
+          </div>
+        </div>
+        <div class="filter-group">
+          <label>排序</label>
+          <select id="sort-select" class="filter-select">
+            <option value="score">综合评分</option>
+            <option value="date">最新发布</option>
+            <option value="innovation">创新度</option>
+            <option value="commercial">商业潜力</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 热点列表 -->
+      <div class="hotspots-list" id="hotspots-list">
+        <!-- 动态加载 -->
+      </div>
+    </div>
+
+    <!-- 机会管理页面 -->
+    <div id="opportunities-page" class="page">
+      <div class="page-header">
+        <h1>机会管理</h1>
+        <div class="page-actions">
+          <div class="search-box glass">
+            <i class="fas fa-search"></i>
+            <input type="text" id="opportunities-search" placeholder="搜索机会...">
+          </div>
+          <button class="action-btn glass primary" id="add-opportunity">
+            <i class="fas fa-plus"></i>
+            <span>新建机会</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 机会列表 -->
+      <div class="opportunities-grid" id="opportunities-list">
+        <!-- 动态加载 -->
+      </div>
+    </div>
+  </main>
+
+  <!-- 热点详情模态框 -->
+  <div class="modal" id="hotspot-modal">
+    <div class="modal-overlay"></div>
+    <div class="modal-content glass">
+      <div class="modal-header">
+        <h2 id="hotspot-modal-title">热点详情</h2>
+        <button class="modal-close" id="hotspot-modal-close">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="modal-body" id="hotspot-modal-body">
+        <!-- 动态内容 -->
+      </div>
+    </div>
+  </div>
+
+  <!-- 机会编辑模态框 -->
+  <div class="modal" id="opportunity-modal">
+    <div class="modal-overlay"></div>
+    <div class="modal-content glass">
+      <div class="modal-header">
+        <h2 id="opportunity-modal-title">机会详情</h2>
+        <button class="modal-close" id="opportunity-modal-close">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="modal-body" id="opportunity-modal-body">
+        <!-- 动态内容 -->
+      </div>
+    </div>
+  </div>
+
+  <!-- 标签管理模态框 -->
+  <div class="modal" id="tags-modal">
+    <div class="modal-overlay"></div>
+    <div class="modal-content glass">
+      <div class="modal-header">
+        <h2>管理标签</h2>
+        <button class="modal-close" id="tags-modal-close">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom: var(--space-lg);">
+          <label style="display: block; margin-bottom: var(--space-sm); font-weight: 600; color: var(--color-text-primary);">新增标签</label>
+          <div style="display: flex; gap: var(--space-sm);">
+            <input type="text" id="new-tag-input" placeholder="输入新标签名称..." style="flex: 1; padding: var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-md); outline: none;">
+            <button id="add-tag-btn" class="action-btn primary">添加</button>
+          </div>
+        </div>
+        <div>
+          <label style="display: block; margin-bottom: var(--space-md); font-weight: 600; color: var(--color-text-primary);">现有标签</label>
+          <div id="existing-tags" style="display: flex; flex-wrap: wrap; gap: var(--space-sm);">
+            <!-- 动态生成 -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

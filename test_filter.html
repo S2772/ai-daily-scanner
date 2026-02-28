@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>筛选器功能测试</title>
+    <link rel="stylesheet" href="static/dashboard.css">
+    <style>
+        .test-container {
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        
+        .test-section {
+            margin: 30px 0;
+            padding: 20px;
+            border: 1px solid #e8e8ed;
+            border-radius: 8px;
+        }
+        
+        .test-data {
+            background: #f8f8fa;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 10px 0;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .filter-preview {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 10px 0;
+        }
+        
+        .filter-result {
+            background: #f0f9ff;
+            border: 1px solid #007aff;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>筛选器功能测试</h1>
+        
+        <div class="test-section">
+            <h2>1. 测试数据</h2>
+            <div class="test-data" id="test-data"></div>
+        </div>
+        
+        <div class="test-section">
+            <h2>2. 筛选器UI预览</h2>
+            <div class="filter-preview">
+                <div style="flex: 1; min-width: 200px;">
+                    <h3>分类筛选</h3>
+                    <div id="category-filters"></div>
+                </div>
+                <div style="flex: 1; min-width: 200px;">
+                    <h3>标签筛选</h3>
+                    <div id="tag-filters"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="test-section">
+            <h2>3. 筛选结果</h2>
+            <div class="filter-result" id="filter-result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h2>4. 控制台</h2>
+            <div style="display: flex; gap: 10px; margin: 10px 0;">
+                <button onclick="testFilter()" style="padding: 8px 16px; background: #007aff; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                    运行筛选测试
+                </button>
+                <button onclick="clearFilters()" style="padding: 8px 16px; background: #ff3b30; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                    清除筛选
+                </button>
+            </div>
+            <div id="console" class="test-data"></div>
+        </div>
+    </div>
+
+    <script>
+        // 模拟数据
+        const testHotspots = [
+            {
+                id: 1,
+                title: "OpenAI发布GPT-5",
+                category: "产品发布",
+                tags: ["大语言模型", "NLP", "OpenAI"],
+                content: "OpenAI发布了新一代大语言模型GPT-5，性能大幅提升",
+                score: 8.5
+            },
+            {
+                id: 2,
+                title: "Google发布Gemini Ultra",
+                category: "产品发布",
+                tags: ["多模态", "Google", "AI模型"],
+                content: "Google发布了多模态AI模型Gemini Ultra",
+                score: 8.0
+            },
+            {
+                id: 3,
+                title: "AI芯片初创公司融资1亿美元",
+                category: "投资融资",
+                tags: ["AI芯片", "硬件", "创业公司"],
+                content: "一家AI芯片初创公司完成1亿美元融资",
+                score: 7.5
+            },
+            {
+                id: 4,
+                title: "Meta开源Llama 3",
+                category: "开源项目",
+                tags: ["开源", "大语言模型", "Meta"],
+                content: "Meta开源了Llama 3大语言模型",
+                score: 8.2
+            },
+            {
+                id: 5,
+                title: "AI医疗诊断系统获批",
+                category: "技术突破",
+                tags: ["医疗AI", "诊断", "FDA"],
+                content: "AI医疗诊断系统获得FDA批准",
+                score: 9.0
+            }
+        ];
+
+        // 状态管理
+        const state = {
+            allHotspots: testHotspots,
+            hotspots: testHotspots,
+            filters: {
+                categories: [],
+                tags: [],
+                search: ''
+            }
+        };
+
+        // 工具函数
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 初始化显示
+        function initDisplay() {
+            // 显示测试数据
+            const testDataEl = document.getElementById('test-data');
+            testDataEl.innerHTML = JSON.stringify(testHotspots, null, 2);
+            
+            // 初始化筛选器
+            updateFilterOptions(testHotspots);
+            renderHotspots(testHotspots);
+        }
+
+        // 从dashboard.js复制的函数
+        function updateFilterOptions(hotspots) {
+            // 提取所有唯一的分类
+            const categories = [...new Set(hotspots.map(h => h.category).filter(Boolean))];
+            renderCategoryFilters(categories);
+            
+            // 提取所有标签
+            const allTags = [];
+            hotspots.forEach(h => {
+                if (h.tags && Array.isArray(h.tags)) {
+                    allTags.push(...h.tags);
+                }
+            });
+            const uniqueTags = [...new Set(allTags)].filter(Boolean);
+            renderTagFilters(uniqueTags);
+        }
+
+        function renderCategoryFilters(categories) {
+            const container = document.getElementById('category-filters');
+            if (!container) return;
+            
+            if (categories.length === 0) {
+                container.innerHTML = '<p class="meta">暂无分类数据</p>';
+                return;
+            }
+            
+            const html = categories.map(category => `
+                <label class="filter-option">
+                    <input type="checkbox" value="${escapeHtml(category)}" class="category-checkbox">
+                    <span>${escapeHtml(category)}</span>
+                </label>
+            `).join('');
+            
+            container.innerHTML = html;
+            
+            // 添加事件监听
+            container.querySelectorAll('.category-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', () => {
+                    updateCategoryFilters();
+                    applyFilters();
+                });
+            });
+        }
+
+        function renderTagFilters(tags) {
+            const container = document.getElementById('tag-filters');
+            if (!container) return;
+            
+            if (tags.length === 0) {
+                container.innerHTML = '<p class="meta">暂无标签数据</p>';
+                return;
+            }
+            
+            const html = tags.map(tag => `
+                <button type="button" class="tag-btn" data-tag="${escapeHtml(tag)}">
+                    ${escapeHtml(tag)}
+                </button>
+            `).join('');
+            
+            container.innerHTML = html;
+            
+            // 添加事件监听
+            container.querySelectorAll('.tag-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const tag = btn.getAttribute('data-tag');
+                    toggleTagFilter(tag);
+                    applyFilters();
+                });
+            });
+        }
+
+        function updateCategoryFilters() {
+            const checkboxes = document.querySelectorAll('.category-checkbox:checked');
+            state.filters.categories = Array.from(checkboxes).map(cb => cb.value);
+        }
+
+        function toggleTagFilter(tag) {
+            const index = state.filters.tags.indexOf(tag);
+            if (index === -1) {
+                state.filters.tags.push(tag);
+            } else {
+                state.filters.tags.splice(index, 1);
+            }
+            
+            // 更新按钮状态
+            const btn = document.querySelector(`.tag-btn[data-tag="${escapeHtml(tag)}"]`);
+            if (btn) {
+                if (state.filters.tags.includes(tag)) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            }
+        }
+
+        function applyFilters() {
+            let filtered = [...state.allHotspots];
+            
+            // 应用分类筛选
+            if (state.filters.categories.length > 0) {
+                filtered = filtered.filter(h => 
+                    state.filters.categories.includes(h.category)
+                );
+            }
+            
+            // 应用标签筛选
+            if (state.filters.tags.length > 0) {
+                filtered = filtered.filter(h => {
+                    if (!h.tags || !Array.isArray(h.tags)) return false;
+                    return state.filters.tags.some(tag => h.tags.includes(tag));
+                });
+            }
+            
+            // 应用搜索筛选
+            if (state.filters.search) {
+                const searchLower = state.filters.search.toLowerCase();
+                filtered = filtered.filter(h => 
+                    (h.title && h.title.toLowerCase().includes(searchLower)) ||
+                    (h.content && h.content.toLowerCase().includes(searchLower)) ||
+                    (h.tags && Array.isArray(h.tags) && h.tags.some(tag => tag.toLowerCase().includes(searchLower)))
+                );
+            }
+            
+            state.hotspots = filtered;
+            renderHotspots(state.hotspots);
+            updateConsole();
+        }
+
+        function renderHotspots(items) {
+            const resultEl = document.getElementById('filter-result');
+            if (!resultEl) return;
+            
+            if (items.length === 0) {
+                resultEl.innerHTML = '<p class="meta">没有匹配的数据</p>';
+                return;
+            }
+            
+            const html = items.map(item => `
+                <div style="margin: 10px 0; padding: 10px; border: 1px solid #e8e8ed; border-radius: 6px;">
+                    <strong>${escapeHtml(item.title)}</strong>
+                    <div style="font-size: 12px; color: #86868b;">
+                        分类: ${escapeHtml(item.category)} | 
+                        标签: ${escapeHtml(item.tags.join(', '))} | 
+                        评分: ${item.score}
+                    </div>
+                    <div style="font-size: 13px; margin-top: 5px;">${escapeHtml(item.content)}</div>
+                </div>
+            `).join('');
+            
+            resultEl.innerHTML = html;
+        }
+
+        function updateConsole() {
+            const consoleEl = document.getElementById('console');
+            if (!consoleEl) return;
+            
+            const info = {
+                筛选条件: {
+                    分类: state.filters.categories,
+                    标签: state.filters.tags,
+                    搜索: state.filters.search || '(空)'
+                },
+                结果数量: state.hotspots.length,
+                原始数据数量: state.allHotspots.length
+            };
+            
+            consoleEl.innerHTML = JSON.stringify(info, null, 2);
+        }
+
+        // 测试函数
+        function testFilter() {
+            // 模拟选择分类
+            const categoryCheckboxes = document.querySelectorAll('.category-checkbox');
+            if (categoryCheckboxes.length > 0) {
+                categoryCheckboxes[0].checked = true;
+                categoryCheckboxes[0].dispatchEvent(new Event('change'));
+            }
+            
+            // 模拟点击标签
+            const tagButtons = document.querySelectorAll('.tag-btn');
+            if (tagButtons.length > 0) {
+                tagButtons[0].click();
+            }
+            
+            updateConsole();
+        }
+
+        function clearFilters() {
+            // 清除分类筛选
+            document.querySelectorAll('.category-checkbox').forEach(cb => {
+                cb.checked = false;
+            });
+            state.filters.categories = [];
+            
+            // 清除标签筛选
+            state.filters.tags = [];
+            document.querySelectorAll('.tag-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // 清除搜索
+            state.filters.search = '';
+            
+            applyFilters();
+        }
+
+        // 页面加载时初始化
+        document.addEventListener('DOMContentLoaded', initDisplay);
+    </script>
+</body>
+</html>

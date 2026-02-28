@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+<head><title>WeWe RSS 公众号订阅</title></head>
+<body>
+<outline text="微信公众号" title="微信公众号">
+  <outline type="rss" text="刘小排r" title="刘小排r" xmlUrl="http://localhost:4000/feeds/MP_WXS_3251517810.atom"/>
+  <outline type="rss" text="歸藏的AI工具箱" title="歸藏的AI工具箱" xmlUrl="http://localhost:4000/feeds/MP_WXS_3540975510.atom"/>
+  <outline type="rss" text="量子位" title="量子位" xmlUrl="http://localhost:4000/feeds/MP_WXS_3236757533.atom"/>
+  <outline type="rss" text="机器之心" title="机器之心" xmlUrl="http://localhost:4000/feeds/MP_WXS_3073282833.atom"/>
+  <outline type="rss" text="数字生命卡兹克" title="数字生命卡兹克" xmlUrl="http://localhost:4000/feeds/MP_WXS_3223096120.atom"/>
+  <outline type="rss" text="赛博禅心" title="赛博禅心" xmlUrl="http://localhost:4000/feeds/MP_WXS_3934419561.atom"/>
+  <outline type="rss" text="AGENT橘" title="AGENT橘" xmlUrl="http://localhost:4000/feeds/MP_WXS_3903697567.atom"/>
+  <outline type="rss" text="卡尔的AI沃茨" title="卡尔的AI沃茨" xmlUrl="http://localhost:4000/feeds/MP_WXS_3871977637.atom"/>
+  <outline type="rss" text="特工宇宙" title="特工宇宙" xmlUrl="http://localhost:4000/feeds/MP_WXS_3621654047.atom"/>
+  <outline type="rss" text="沃垠AI" title="沃垠AI" xmlUrl="http://localhost:4000/feeds/MP_WXS_3201599457.atom"/>
+  <outline type="rss" text="夕小瑶科技说" title="夕小瑶科技说" xmlUrl="http://localhost:4000/feeds/MP_WXS_3207765945.atom"/>
+  <outline type="rss" text="小互AI" title="小互AI" xmlUrl="http://localhost:4000/feeds/MP_WXS_3931721816.atom"/>
+  <outline type="rss" text="宝玉AI" title="宝玉AI" xmlUrl="http://localhost:4000/feeds/MP_WXS_3957812448.atom"/>
+  <outline type="rss" text="李继刚" title="李继刚" xmlUrl="http://localhost:4000/feeds/MP_WXS_3913757353.atom"/>
+  <outline type="rss" text="云中江树" title="云中江树" xmlUrl="http://localhost:4000/feeds/MP_WXS_3016599109.atom"/>
+  <outline type="rss" text="向阳乔木推荐看" title="向阳乔木推荐看" xmlUrl="http://localhost:4000/feeds/MP_WXS_3008229483.atom"/>
+  <outline type="rss" text="一泽Eze" title="一泽Eze" xmlUrl="http://localhost:4000/feeds/MP_WXS_3234547650.atom"/>
+  <outline type="rss" text="财猫AI" title="财猫AI" xmlUrl="http://localhost:4000/feeds/MP_WXS_3915551678.atom"/>
+  <outline type="rss" text="云舒的AI实践笔记" title="云舒的AI实践笔记" xmlUrl="http://localhost:4000/feeds/MP_WXS_3225155038.atom"/>
+  <outline type="rss" text="甲木未来派" title="甲木未来派" xmlUrl="http://localhost:4000/feeds/MP_WXS_3916643350.atom"/>
+  <outline type="rss" text="汗青 AITalk" title="汗青 AITalk" xmlUrl="http://localhost:4000/feeds/MP_WXS_3895843617.atom"/>
+  <outline type="rss" text="海辛和阿文" title="海辛和阿文" xmlUrl="http://localhost:4000/feeds/MP_WXS_3236770276.atom"/>
+  <outline type="rss" text="闲人一坤" title="闲人一坤" xmlUrl="http://localhost:4000/feeds/MP_WXS_3910637539.atom"/>
+  <outline type="rss" text="阿真Irene" title="阿真Irene" xmlUrl="http://localhost:4000/feeds/MP_WXS_3917638807.atom"/>
+  <outline type="rss" text="TATALAB" title="TATALAB" xmlUrl="http://localhost:4000/feeds/MP_WXS_3990616823.atom"/>
+  <outline type="rss" text="老秦" title="老秦" xmlUrl="http://localhost:4000/feeds/MP_WXS_2399167584.atom"/>
+  <outline type="rss" text="艾逗笔" title="艾逗笔" xmlUrl="http://localhost:4000/feeds/MP_WXS_3544989962.atom"/>
+  <outline type="rss" text="苍何" title="苍何" xmlUrl="http://localhost:4000/feeds/MP_WXS_3585152880.atom"/>
+  <outline type="rss" text="袋鼠帝AI客栈" title="袋鼠帝AI客栈" xmlUrl="http://localhost:4000/feeds/MP_WXS_3903186594.atom"/>
+  <outline type="rss" text="刘聪NLP" title="刘聪NLP" xmlUrl="http://localhost:4000/feeds/MP_WXS_3891555159.atom"/>
+  <outline type="rss" text="花叔" title="花叔" xmlUrl="http://localhost:4000/feeds/MP_WXS_3869059014.atom"/>
+  <outline type="rss" text="梦飞 AI" title="梦飞 AI" xmlUrl="http://localhost:4000/feeds/MP_WXS_3926276460.atom"/>
+  <outline type="rss" text="饼干哥哥AGI" title="饼干哥哥AGI" xmlUrl="http://localhost:4000/feeds/MP_WXS_2394281674.atom"/>
+  <outline type="rss" text="第二曲线增长" title="第二曲线增长" xmlUrl="http://localhost:4000/feeds/MP_WXS_3293993092.atom"/>
+  <outline type="rss" text="浮之静" title="浮之静" xmlUrl="http://localhost:4000/feeds/MP_WXS_3236165275.atom"/>
+  <outline type="rss" text="孔某人的低维认知" title="孔某人的低维认知" xmlUrl="http://localhost:4000/feeds/MP_WXS_3940569956.atom"/>
+  <outline type="rss" text="AI产品阿颖" title="AI产品阿颖" xmlUrl="http://localhost:4000/feeds/MP_WXS_3892772220.atom"/>
+  <outline type="rss" text="洛小山" title="洛小山" xmlUrl="http://localhost:4000/feeds/MP_WXS_3509716326.atom"/>
+  <outline type="rss" text="AI产品银海" title="AI产品银海" xmlUrl="http://localhost:4000/feeds/MP_WXS_3913528478.atom"/>
+  <outline type="rss" text="AI产品黄叔" title="AI产品黄叔" xmlUrl="http://localhost:4000/feeds/MP_WXS_2398553439.atom"/>
+  <outline type="rss" text="hanniman" title="hanniman" xmlUrl="http://localhost:4000/feeds/MP_WXS_2397099000.atom"/>
+  <outline type="rss" text="南瓜博士" title="南瓜博士" xmlUrl="http://localhost:4000/feeds/MP_WXS_3082390246.atom"/>
+  <outline type="rss" text="玉树芝兰" title="玉树芝兰" xmlUrl="http://localhost:4000/feeds/MP_WXS_3228253624.atom"/>
+  <outline type="rss" text="谭少卿" title="谭少卿" xmlUrl="http://localhost:4000/feeds/MP_WXS_2397759220.atom"/>
+  <outline type="rss" text="水的离子积常数" title="水的离子积常数" xmlUrl="http://localhost:4000/feeds/MP_WXS_3885888086.atom"/>
+  <outline type="rss" text="快刀青衣" title="快刀青衣" xmlUrl="http://localhost:4000/feeds/MP_WXS_2396422154.atom"/>
+  <outline type="rss" text="01Founder" title="01Founder" xmlUrl="http://localhost:4000/feeds/MP_WXS_3927644787.atom"/>
+  <outline type="rss" text="摸鱼小李" title="摸鱼小李" xmlUrl="http://localhost:4000/feeds/MP_WXS_3099231158.atom"/>
+  <outline type="rss" text="Rico有三猫" title="Rico有三猫" xmlUrl="http://localhost:4000/feeds/MP_WXS_3509712264.atom"/>
+  <outline type="rss" text="栗噔噔" title="栗噔噔" xmlUrl="http://localhost:4000/feeds/MP_WXS_3536714702.atom"/>
+  <outline type="rss" text="AIGC新知" title="AIGC新知" xmlUrl="http://localhost:4000/feeds/MP_WXS_3919587129.atom"/>
+  <outline type="rss" text="靠谱瓦叔AI趣探" title="靠谱瓦叔AI趣探" xmlUrl="http://localhost:4000/feeds/MP_WXS_3964866055.atom"/>
+  <outline type="rss" text="赛博小熊猫Loki" title="赛博小熊猫Loki" xmlUrl="http://localhost:4000/feeds/MP_WXS_3293454745.atom"/>
+  <outline type="rss" text="通往AGI之路" title="通往AGI之路" xmlUrl="http://localhost:4000/feeds/MP_WXS_3933490096.atom"/>
+  <outline type="rss" text="WayToAGI Agent探索" title="WayToAGI Agent探索" xmlUrl="http://localhost:4000/feeds/MP_WXS_3263867436.atom"/>
+  <outline type="rss" text="WaytoAGI 实用指北" title="WaytoAGI 实用指北" xmlUrl="http://localhost:4000/feeds/MP_WXS_3639138360.atom"/>
+</outline>
+</body>
+</opml>

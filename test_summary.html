@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>摘要和翻译功能测试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .test-case {
+            background: #f5f5f5;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+        .result {
+            background: #e8f5e8;
+            padding: 15px;
+            margin: 10px 0;
+            border-left: 4px solid #4CAF50;
+        }
+        .error {
+            background: #ffebee;
+            padding: 15px;
+            margin: 10px 0;
+            border-left: 4px solid #f44336;
+        }
+        h1, h2, h3 {
+            color: #333;
+        }
+        code {
+            background: #eee;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>摘要和翻译功能测试</h1>
+    <p>测试修改后的智能摘要和中文翻译功能。</p>
+    
+    <div class="test-case">
+        <h2>测试1: 智能摘要功能</h2>
+        <p><strong>测试内容：</strong></p>
+        <code>OpenAI今天发布了GPT-5，支持文本、图像、音频的多模态理解，在多项基准测试中刷新记录。该模型在自然语言处理、计算机视觉和语音识别等多个领域都表现出色。</code>
+        
+        <p><strong>预期结果：</strong>应该显示第一个完整的句子，而不是简单截取前120个字符。</p>
+        
+        <div id="test1-result" class="result">
+            测试中...
+        </div>
+    </div>
+    
+    <div class="test-case">
+        <h2>测试2: 中文翻译功能</h2>
+        <p><strong>测试标题：</strong> <code>OpenAI releases GPT-5 with multimodal capabilities</code></p>
+        
+        <p><strong>预期结果：</strong>应该显示中文翻译，而不是"（中文翻译待完善）"</p>
+        
+        <div id="test2-result" class="result">
+            测试中...
+        </div>
+    </div>
+    
+    <div class="test-case">
+        <h2>测试3: 已经是中文的内容</h2>
+        <p><strong>测试标题：</strong> <code>谷歌发布新一代AI芯片</code></p>
+        
+        <p><strong>预期结果：</strong>应该直接显示原中文标题，不需要翻译</p>
+        
+        <div id="test3-result" class="result">
+            测试中...
+        </div>
+    </div>
+    
+    <script>
+        // 从dashboard.js复制相关函数
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        function getChineseTranslation(text) {
+            if (!text) return '暂无翻译';
+            
+            // 如果已经是中文，不需要翻译
+            if (/[\u4e00-\u9fff]/.test(text)) {
+                return text; // 返回原文本，因为已经是中文
+            }
+            
+            // 简单的翻译映射表（实际应用中应该使用翻译API）
+            const translations = {
+                'GPT-5': 'GPT-5（第五代生成式预训练模型）',
+                'OpenAI': 'OpenAI（人工智能研究公司）',
+                'AI': '人工智能',
+                'machine learning': '机器学习',
+                'deep learning': '深度学习',
+                'neural network': '神经网络',
+                'computer vision': '计算机视觉',
+                'natural language processing': '自然语言处理',
+                'NLP': '自然语言处理',
+                'LLM': '大语言模型',
+                'multimodal': '多模态',
+                'startup': '初创公司',
+                'funding': '融资',
+                'investment': '投资',
+                'venture capital': '风险投资',
+                'product launch': '产品发布',
+                'technology breakthrough': '技术突破',
+                'open source': '开源',
+                'hardware': '硬件',
+                'market opportunity': '市场机会',
+                'Google': '谷歌',
+                'Microsoft': '微软',
+                'Meta': 'Meta（原Facebook）',
+                'NVIDIA': '英伟达',
+                'DeepMind': 'DeepMind（谷歌旗下AI公司）',
+                'reinforcement learning': '强化学习',
+                'generative AI': '生成式人工智能',
+                'transformer': 'Transformer模型',
+                'diffusion model': '扩散模型',
+                'autonomous driving': '自动驾驶',
+                'robotics': '机器人技术',
+                'quantum computing': '量子计算',
+                'edge computing': '边缘计算',
+                'cloud computing': '云计算',
+                'big data': '大数据',
+                'data mining': '数据挖掘',
+                'computer science': '计算机科学',
+                'software engineering': '软件工程',
+                'algorithm': '算法',
+                'optimization': '优化',
+                'benchmark': '基准测试',
+                'performance': '性能',
+                'efficiency': '效率',
+                'accuracy': '准确率',
+                'precision': '精确率',
+                'recall': '召回率',
+                'F1 score': 'F1分数',
+                'releases': '发布',
+                'with': '具有',
+                'capabilities': '能力'
+            };
+            
+            // 检查是否有直接匹配
+            const lowerText = text.toLowerCase();
+            for (const [key, value] of Object.entries(translations)) {
+                if (lowerText.includes(key.toLowerCase())) {
+                    return value;
+                }
+            }
+            
+            // 尝试提取主要名词进行翻译
+            const words = text.split(/[\s\-_]+/);
+            for (const word of words) {
+                if (word.length > 2) { // 只处理长度大于2的单词
+                    const lowerWord = word.toLowerCase();
+                    for (const [key, value] of Object.entries(translations)) {
+                        if (lowerWord === key.toLowerCase()) {
+                            return value;
+                        }
+                    }
+                }
+            }
+            
+            // 如果没有匹配，返回占位符
+            return '（中文翻译待完善）';
+        }
+        
+        // 智能摘要函数：提取中文内容的关键句子
+        function generateChineseSummary(content, maxLength = 120) {
+            if (!content) return '';
+            
+            // 如果内容已经是中文且长度合适，直接返回
+            if (content.length <= maxLength) {
+                return content;
+            }
+            
+            // 尝试找到句号、问号、感叹号等标点作为句子边界
+            const sentenceEndings = /[。！？.!?]/;
+            const sentences = content.split(sentenceEndings).filter(s => s.trim().length > 0);
+            
+            if (sentences.length > 0) {
+                // 返回第一个完整的句子
+                const firstSentence = sentences[0].trim();
+                if (firstSentence.length <= maxLength) {
+                    return firstSentence + (firstSentence.length < content.length ? '...' : '');
+                }
+            }
+            
+            // 如果没有找到合适的句子边界，简单截取
+            return content.slice(0, maxLength) + '...';
+        }
+        
+        // 运行测试
+        document.addEventListener('DOMContentLoaded', function() {
+            // 测试1: 智能摘要
+            const testContent = "OpenAI今天发布了GPT-5，支持文本、图像、音频的多模态理解，在多项基准测试中刷新记录。该模型在自然语言处理、计算机视觉和语音识别等多个领域都表现出色。";
+            const summary = generateChineseSummary(testContent, 120);
+            document.getElementById('test1-result').innerHTML = `
+                <strong>生成摘要：</strong> ${escapeHtml(summary)}<br>
+                <strong>摘要长度：</strong> ${summary.length} 字符<br>
+                <strong>原内容长度：</strong> ${testContent.length} 字符<br>
+                <strong>测试结果：</strong> ${summary.includes('。') ? '✅ 成功提取完整句子' : '⚠️ 可能只是简单截取'}
+            `;
+            
+            // 测试2: 英文标题翻译
+            const englishTitle = "OpenAI releases GPT-5 with multimodal capabilities";
+            const translation = getChineseTranslation(englishTitle);
+            document.getElementById('test2-result').innerHTML = `
+                <strong>原标题：</strong> ${escapeHtml(englishTitle)}<br>
+                <strong>中文翻译：</strong> ${escapeHtml(translation)}<br>
+                <strong>测试结果：</strong> ${translation !== '（中文翻译待完善）' ? '✅ 翻译成功' : '❌ 翻译失败'}
+            `;
+            
+            // 测试3: 中文标题（不需要翻译）
+            const chineseTitle = "谷歌发布新一代AI芯片";
+            const chineseTranslation = getChineseTranslation(chineseTitle);
+            document.getElementById('test3-result').innerHTML = `
+                <strong>原标题：</strong> ${escapeHtml(chineseTitle)}<br>
+                <strong"处理结果：</strong> ${escapeHtml(chineseTranslation)}<br>
+                <strong>测试结果：</strong> ${chineseTranslation === chineseTitle ? '✅ 正确识别中文，无需翻译' : '❌ 错误处理'}
+            `;
+        });
+    </script>
+</body>
+</html>
