@@ -285,9 +285,10 @@ def load_all_sources(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
 
 def connect_db() -> sqlite3.Connection:
     (BASE_DIR / "data").mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
-    
+    conn.execute("PRAGMA journal_mode=WAL")
+
     # 数据库迁移：添加缺失列
     cursor = conn.cursor()
     for col, ddl in [("ai_summary", "TEXT"), ("title_zh", "TEXT")]:
@@ -296,7 +297,7 @@ def connect_db() -> sqlite3.Connection:
         except sqlite3.OperationalError:
             cursor.execute(f"ALTER TABLE hotspots ADD COLUMN {col} {ddl}")
             conn.commit()
-    
+
     return conn
 
 
@@ -598,12 +599,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             (date, limit),
         )
         rows = cursor.fetchall()
-        
+
         # 检查并生成缺失的AI摘要（每次最多生成3个，避免超时）
         hotspots = []
         generated_count = 0
         max_generate = 3  # 每次最多生成3个
-        
+
         for row in rows:
             hotspot = serialize_hotspot(row)
             # 如果没有AI摘要且未超过生成上限，生成一个
@@ -612,17 +613,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 title = hotspot.get("title", "")
                 if content and len(content) > 20:
                     result = generate_ai_summary(content, title)
-                    cursor.execute(
-                        "UPDATE hotspots SET ai_summary = ?, title_zh = ? WHERE id = ?",
-                        (result["summary"], result["title_zh"], hotspot["id"])
-                    )
-                    hotspot["ai_summary"] = result["summary"]
-                    hotspot["title_zh"] = result["title_zh"]
-                    generated_count += 1
+                    try:
+                        cursor.execute(
+                            "UPDATE hotspots SET ai_summary = ?, title_zh = ? WHERE id = ?",
+                            (result["summary"], result["title_zh"], hotspot["id"])
+                        )
+                        hotspot["ai_summary"] = result["summary"]
+                        hotspot["title_zh"] = result["title_zh"]
+                        generated_count += 1
+                    except sqlite3.OperationalError:
+                        pass
             hotspots.append(hotspot)
-        
+
         if generated_count > 0:
-            conn.commit()
+            try:
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
         conn.close()
         json_response(self, HTTPStatus.OK, {"ok": True, "date": date, "hotspots": hotspots, "generated": generated_count})
 

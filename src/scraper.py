@@ -12,7 +12,45 @@ import time
 import feedparser
 from typing import List, Dict, Any
 import hashlib
+from html.parser import HTMLParser
 from .twitter_scraper import TwitterScraper
+
+
+class _StripTagsParser(HTMLParser):
+    """Strip HTML tags and extract plain text, skipping script/style content."""
+    def __init__(self):
+        super().__init__()
+        self._skip = False
+        self._parts = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() in ("script", "style"):
+            self._skip = True
+
+    def handle_endtag(self, tag):
+        if tag.lower() in ("script", "style"):
+            self._skip = False
+
+    def handle_data(self, data):
+        if not self._skip:
+            self._parts.append(data)
+
+    def get_text(self):
+        return " ".join(part.strip() for part in self._parts if part.strip())
+
+
+def strip_html_tags(html: str) -> str:
+    """Extract plain text from HTML, removing script/style content."""
+    if not html:
+        return ""
+    parser = _StripTagsParser()
+    try:
+        parser.feed(html)
+        return parser.get_text()
+    except Exception:
+        # Fallback: crude tag removal
+        import re
+        return re.sub(r"<[^>]+>", " ", html).strip()
 
 class AIScraper:
     def __init__(self, db_path: str = "data/ai_hotspots.db"):
@@ -269,7 +307,8 @@ class AIScraper:
                 print(f"Warning: RSS解析可能异常 {feed_url}")
 
             for entry in feed.entries[:10]:  # 只取前10条
-                content = entry.get("summary", "") or entry.get("description", "")
+                raw_content = entry.get("summary", "") or entry.get("description", "")
+                content = strip_html_tags(raw_content)
                 item = {
                     "id": self.generate_id(entry.get("link", "") + entry.get("title", "")),
                     "title": entry.get("title", ""),
@@ -341,19 +380,40 @@ class AIScraper:
     def classify_content(self, text: str) -> str:
         """根据内容文本分类"""
         text_lower = text.lower()
-        
-        # 简单的关键词分类
-        tech_keywords = ["paper", "research", "algorithm", "model", "training", "accuracy"]
-        product_keywords = ["launch", "release", "announce", "product", "feature", "update"]
-        investment_keywords = ["funding", "investment", "series", "raise", "valuation", "investor"]
-        industry_keywords = ["partnership", "collaboration", "regulation", "policy", "standard"]
-        
-        if any(keyword in text_lower for keyword in tech_keywords):
+
+        tech_keywords = [
+            "paper", "research", "algorithm", "model", "training", "accuracy",
+            "技术突破", "技术创新", "算法", "模型", "训练", "研究", "论文",
+            "开源", "架构", "推理", "微调", "预训练", "基准测试", "性能提升",
+        ]
+        product_keywords = [
+            "launch", "release", "announce", "product", "feature", "update",
+            "产品发布", "新功能", "上线", "发布", "推出", "更新", "版本",
+            "应用", "工具", "平台", "插件", "接口", "API",
+        ]
+        investment_keywords = [
+            "funding", "investment", "series", "raise", "valuation", "investor",
+            "融资", "投资", "估值", "轮融资", "亿美元", "亿元", "收购", "并购",
+            "上市", "IPO", "风投", "VC", "天使轮", "A轮", "B轮", "C轮",
+        ]
+        industry_keywords = [
+            "partnership", "collaboration", "regulation", "policy", "standard",
+            "行业动态", "监管", "政策", "法规", "合作", "标准", "生态",
+            "竞争", "市场份额", "行业报告", "趋势", "格局",
+        ]
+        talent_keywords = [
+            "人才", "加入", "离职", "跳槽", "招聘", "团队", "创始人",
+            "CEO", "CTO", "hired", "joins", "leaves", "founder",
+        ]
+
+        if any(keyword in text_lower for keyword in investment_keywords):
+            return "投资融资"
+        elif any(keyword in text_lower for keyword in tech_keywords):
             return "技术突破"
         elif any(keyword in text_lower for keyword in product_keywords):
             return "产品发布"
-        elif any(keyword in text_lower for keyword in investment_keywords):
-            return "投资融资"
+        elif any(keyword in text_lower for keyword in talent_keywords):
+            return "人才流动"
         elif any(keyword in text_lower for keyword in industry_keywords):
             return "行业动态"
         else:
@@ -698,18 +758,19 @@ class AIScraper:
     def calculate_scores_detailed(self, title: str, content: str, category: str) -> Dict[str, int]:
         """计算各项评分"""
         text = (title + " " + content).lower()
-        
+
         # 创新度评分
         innovation_score = 5  # 基础分
         innovation_keywords = [
             "breakthrough", "novel", "innovative", "new approach", "first", "pioneering",
             "groundbreaking", "state-of-the-art", "cutting-edge", "revolutionary",
-            "突破", "新颖", "创新", "首创", "前沿", "领先", "革命性"
+            "突破", "新颖", "创新", "首创", "前沿", "领先", "革命性",
+            "首次", "全新", "开创", "里程碑", "超越", "刷新", "sota",
         ]
         for keyword in innovation_keywords:
             if keyword in text:
                 innovation_score += 1
-        
+
         # 商业潜力评分
         commercial_score = 5  # 基础分
         commercial_keywords = [
@@ -717,29 +778,34 @@ class AIScraper:
             "market", "revenue", "profit", "business", "commercial", "product",
             "launch", "release", "customer", "user", "growth", "scale",
             "融资", "投资", "估值", "市场", "收入", "利润", "商业", "产品",
-            "发布", "客户", "用户", "增长", "规模化"
+            "发布", "客户", "用户", "增长", "规模化", "变现", "盈利",
+            "订阅", "付费", "企业", "toB", "tob", "saas", "上线", "推出",
         ]
         for keyword in commercial_keywords:
             if keyword in text:
                 commercial_score += 1
-        
+
         # 技术难度评分
         tech_score = 5  # 基础分
         tech_keywords = [
             "algorithm", "model", "framework", "architecture", "system", "method",
             "technique", "approach", "solution", "implementation",
-            "算法", "模型", "框架", "架构", "系统", "方法", "技术", "实现"
+            "算法", "模型", "框架", "架构", "系统", "方法", "技术", "实现",
+            "训练", "推理", "微调", "部署", "开源", "代码", "参数", "性能",
+            "benchmark", "评测", "基准", "准确率", "效果", "优化",
         ]
         for keyword in tech_keywords:
             if keyword in text:
                 tech_score += 1
-        
+
         # 投资价值评分
         investment_score = 5  # 基础分
         investment_keywords = [
             "funding", "investment", "series", "raise", "valuation", "investor",
-            "acquisition", "merger", "ipo", "exit", "valuation",
-            "融资", "投资", "收购", "合并", "上市", "退出", "估值"
+            "acquisition", "merger", "ipo", "exit",
+            "融资", "投资", "收购", "合并", "上市", "退出", "估值",
+            "亿美元", "亿元", "千万", "轮融资", "天使", "风投", "vc",
+            "红杉", "a16z", "软银", "高瓴", "IDG",
         ]
         for keyword in investment_keywords:
             if keyword in text:
