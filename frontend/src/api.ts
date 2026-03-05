@@ -232,6 +232,28 @@ export async function fetchTrend(days = 30): Promise<TrendData> {
   return requestJson(`/api/trend?days=${days}`);
 }
 
+export type CollectRun = {
+  id: number;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  hotspots_inserted: number;
+  opportunities_count: number;
+  sources_success: number;
+  sources_empty: number;
+  sources_error: number;
+  items_total: number;
+  items_new: number;
+  items_existing: number;
+  notes: string | null;
+  date_breakdown?: Array<{ content_date: string; item_count: number }>;
+};
+
+export async function fetchCollectRuns(limit = 30): Promise<CollectRun[]> {
+  const data = await requestJson(`/api/collect-runs?limit=${limit}`);
+  return data.runs || [];
+}
+
 export async function fetchSourceStatus(dateOrFilter?: string | DateFilter): Promise<SourceStatus[]> {
   const params = buildDateParams(dateOrFilter);
   const data = await requestJson(`/api/source-status?${params.toString()}`);

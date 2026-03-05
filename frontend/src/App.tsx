@@ -51,7 +51,7 @@ export default function App() {
     <div className="min-h-screen bg-[#FAFAFA] text-[#111111] font-sans flex">
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
       <main className="flex-1 ml-64 h-screen overflow-hidden p-8">
-        <div className="max-w-6xl mx-auto h-full">
+        <div className="max-w-6xl mx-auto h-full flex flex-col min-h-0">
           {renderContent()}
         </div>
       </main>

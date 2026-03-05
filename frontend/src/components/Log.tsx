@@ -1,24 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { FileText, Calendar, Filter, ChevronDown, Activity, TrendingUp } from 'lucide-react';
-import { fetchTrend, fetchSourceStatus, fetchLatestDate, SourceStatus, TrendData } from '../api';
+import { fetchTrend, fetchSourceStatus, fetchLatestDate, fetchCollectRuns, CollectRun, SourceStatus, TrendData } from '../api';
 
 export function Log() {
   const [trend, setTrend] = useState<TrendData | null>(null);
+  const [trendDays, setTrendDays] = useState<1 | 7 | 30>(30);
+  const [collectRuns, setCollectRuns] = useState<CollectRun[]>([]);
+  const [expandedRunId, setExpandedRunId] = useState<number | null>(null);
   const [sourceStatuses, setSourceStatuses] = useState<SourceStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState<'all' | 'success' | 'error'>('all');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   useEffect(() => {
+    setLoading(true);
     Promise.all([
-      fetchTrend(30),
+      fetchTrend(trendDays),
       fetchLatestDate().then(d => fetchSourceStatus(d)),
-    ]).then(([t, ss]) => {
-      setTrend(t);
-      setSourceStatuses(ss);
-      setLoading(false);
-    }).catch(() => setLoading(false));
-  }, []);
+      fetchCollectRuns(30),
+    ])
+      .then(([t, ss, runs]) => {
+        setTrend(t);
+        setSourceStatuses(ss);
+        setCollectRuns(runs);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [trendDays]);
 
   const filteredStatuses = sourceStatuses.filter(s =>
     filterType === 'all' || s.status === filterType
@@ -29,32 +37,46 @@ export function Log() {
   const totalItems = sourceStatuses.reduce((sum, s) => sum + (s.item_count || 0), 0);
 
   return (
-    <div className="h-full flex flex-col overflow-y-auto pb-8 pr-2">
+    <div className="min-h-0 flex-1 flex flex-col overflow-y-auto pb-8 pr-2">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-6">
         <div className="space-y-1">
           <h1 className="text-xl font-semibold tracking-tight">Log</h1>
-          <p className="text-gray-500 text-xs">Collection activity and source status from the latest run.</p>
+          <p className="text-gray-500 text-xs">Daily collection runs, content-date distribution, and source health.</p>
         </div>
 
-        <div className="relative">
-          <button
-            onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-            className="flex items-center gap-2 px-3 py-1.5 bg-white border border-[#EAEAEA] rounded-md text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm"
-          >
-            <Filter className="w-3.5 h-3.5 text-gray-400" />
-            {filterType === 'all' ? 'All Sources' : filterType === 'success' ? 'Success' : 'Errors'}
-            <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
-          </button>
-          {isDropdownOpen && (
-            <div className="absolute right-0 mt-1 w-36 bg-white border border-[#EAEAEA] rounded-md shadow-lg z-10 py-1">
-              {(['all', 'success', 'error'] as const).map(opt => (
-                <button key={opt} onClick={() => { setFilterType(opt); setIsDropdownOpen(false); }}
-                  className={`w-full text-left px-3 py-1.5 text-xs ${filterType === opt ? 'bg-purple-50 text-purple-700 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}>
-                  {opt === 'all' ? 'All Sources' : opt === 'success' ? 'Success' : 'Errors'}
-                </button>
-              ))}
-            </div>
-          )}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center bg-white border border-[#EAEAEA] rounded-md shadow-sm overflow-hidden">
+            {([1, 7, 30] as const).map(d => (
+              <button
+                key={d}
+                onClick={() => setTrendDays(d)}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors ${trendDays === d ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-50'}`}
+              >
+                {d === 1 ? '1D' : d === 7 ? '7D' : '30D'}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative">
+            <button
+              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+              className="flex items-center gap-2 px-3 py-1.5 bg-white border border-[#EAEAEA] rounded-md text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm"
+            >
+              <Filter className="w-3.5 h-3.5 text-gray-400" />
+              {filterType === 'all' ? 'All Sources' : filterType === 'success' ? 'Success' : 'Errors'}
+              <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+            </button>
+            {isDropdownOpen && (
+              <div className="absolute right-0 mt-1 w-36 bg-white border border-[#EAEAEA] rounded-md shadow-lg z-10 py-1">
+                {(['all', 'success', 'error'] as const).map(opt => (
+                  <button key={opt} onClick={() => { setFilterType(opt); setIsDropdownOpen(false); }}
+                    className={`w-full text-left px-3 py-1.5 text-xs ${filterType === opt ? 'bg-purple-50 text-purple-700 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}>
+                    {opt === 'all' ? 'All Sources' : opt === 'success' ? 'Success' : 'Errors'}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -78,26 +100,104 @@ export function Log() {
             </div>
           </div>
 
-          {/* Trend chart (text-based) */}
+          {/* Collection runs */}
+          <div className="bg-white border border-[#EAEAEA] rounded-lg overflow-hidden mb-6">
+            <div className="px-4 py-3 border-b border-gray-100">
+              <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+                <FileText className="w-4 h-4 text-gray-700" />
+                Collection Runs
+              </h3>
+              <div className="text-[11px] text-gray-500 mt-0.5">Shows what was collected and how it distributes by content date.</div>
+            </div>
+            {collectRuns.length === 0 ? (
+              <div className="p-8 text-center text-gray-400 text-sm">No runs yet. Trigger collection from Overview.</div>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {collectRuns.map(r => {
+                  const isExpanded = expandedRunId === r.id;
+                  return (
+                    <div key={r.id} className="px-4 py-3">
+                      <button
+                        className="w-full flex items-start justify-between gap-4 text-left"
+                        onClick={() => setExpandedRunId(isExpanded ? null : r.id)}
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-gray-900">Run #{r.id}</span>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${r.status === 'success' ? 'bg-emerald-50 text-emerald-700' : r.status === 'running' ? 'bg-gray-100 text-gray-700' : 'bg-red-50 text-red-600'}`}>{r.status}</span>
+                          </div>
+                          <div className="text-[11px] text-gray-500 truncate">
+                            {r.started_at}{r.finished_at ? ` → ${r.finished_at}` : ''}
+                          </div>
+                        </div>
+                        <div className="shrink-0 flex items-center gap-3">
+                          <div className="text-right">
+                            <div className="text-xs text-gray-500">Items</div>
+                            <div className="text-sm font-semibold text-gray-900">{(r.hotspots_inserted || 0).toLocaleString()}</div>
+                          </div>
+                          <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                        </div>
+                      </button>
+
+                      {isExpanded && (
+                        <div className="mt-3 bg-gray-50 rounded-md p-3">
+                          <div className="grid grid-cols-3 gap-3 mb-3">
+                            <div>
+                              <div className="text-[10px] text-gray-500">Sources</div>
+                              <div className="text-xs text-gray-700">OK {r.sources_success} / Empty {r.sources_empty} / Err {r.sources_error}</div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] text-gray-500">Opportunities</div>
+                              <div className="text-xs text-gray-700">{r.opportunities_count}</div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] text-gray-500">Notes</div>
+                              <div className="text-xs text-gray-700 truncate">{r.notes || '-'}</div>
+                            </div>
+                          </div>
+
+                          <div className="text-[10px] text-gray-500 mb-2">Content date breakdown</div>
+                          {r.date_breakdown && r.date_breakdown.length > 0 ? (
+                            <div className="space-y-1">
+                              {r.date_breakdown.map(b => (
+                                <div key={b.content_date} className="flex items-center justify-between text-xs text-gray-700">
+                                  <span>{b.content_date}</span>
+                                  <span className="font-medium">{b.item_count}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-gray-400">No breakdown data.</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Trend chart */}
           {trend && trend.trend.length > 0 && (
             <div className="bg-white border border-[#EAEAEA] rounded-lg p-4 mb-6">
               <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5 mb-4">
                 <TrendingUp className="w-4 h-4 text-purple-600" />
-                30-Day Collection Trend
+                Collection Trend ({trendDays}D)
               </h3>
-              <div className="flex items-end gap-1 h-20 overflow-x-auto">
-                {trend.trend.slice(-30).map(d => {
+              <div className="flex items-end gap-1 h-24 overflow-x-auto">
+                {trend.trend.slice(-trendDays).map(d => {
                   const max = Math.max(...trend.trend.map(x => x.count), 1);
-                  const h = Math.max(4, Math.round((d.count / max) * 72));
+                  const h = Math.max(4, Math.round((d.count / max) * 88));
                   return (
-                    <div key={d.date} className="flex flex-col items-center gap-1 shrink-0" title={`${d.date}: ${d.count} items`}>
-                      <div className="w-3 bg-purple-400 rounded-t hover:bg-purple-600 transition-colors" style={{ height: `${h}px` }}></div>
+                    <div key={d.date} className="flex flex-col items-center gap-1 shrink-0" title={`${d.date}: ${d.count} items (avg score ${d.avg_score})`}>
+                      <div className="w-4 bg-purple-400 rounded-t hover:bg-purple-600 transition-colors" style={{ height: `${h}px` }}></div>
                     </div>
                   );
                 })}
               </div>
               <div className="flex justify-between text-[10px] text-gray-400 mt-1">
-                <span>{trend.trend[0]?.date}</span>
+                <span>{trend.trend[Math.max(0, trend.trend.length - trendDays)]?.date}</span>
                 <span>{trend.trend[trend.trend.length - 1]?.date}</span>
               </div>
             </div>
