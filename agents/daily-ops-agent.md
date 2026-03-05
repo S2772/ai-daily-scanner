@@ -3,9 +3,10 @@
 ## Purpose
 Orchestrate daily pipeline execution for this project:
 1. Collect hotspots.
-2. Validate freshness and quality gates.
-3. Recompute opportunities.
-4. Generate daily report only when gates pass.
+2. Backfill missing Chinese titles and AI summaries.
+3. Validate freshness and quality gates.
+4. Recompute opportunities.
+5. Generate daily report only when gates pass.
 
 ## Execution Policy
 - Use `$daily-collector-reliability` for collection and failure handling changes.
@@ -16,6 +17,7 @@ Orchestrate daily pipeline execution for this project:
 ## Suggested Daily Run
 ```bash
 python3 main.py collect
+python3 regen_summaries.py
 python3 skills/report-quality-gate/scripts/report_gate_check.py
 python3 main.py report
 ```

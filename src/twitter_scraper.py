@@ -17,7 +17,7 @@ import hashlib
 AI_API_CONFIG = {
     "base_url": "https://bobdong.cn/v1/chat/completions",
     "api_key": "sk-pkTNOMFFkTCohLxN8Fswqhr5pCbPxypDHRy8hoATEFbIO2El",
-    "model": "MiniMax-M2.5"
+    "model": "gpt-5.2-codex"
 }
 
 
@@ -25,6 +25,18 @@ class TwitterScraper:
     def __init__(self, db_path: str = "data/ai_hotspots.db"):
         """初始化Twitter爬虫"""
         self.db_path = db_path
+        self.min_valid_content_length = 100
+        self.max_fetch_attempts = 2
+        self.placeholder_markers = [
+            "people on x are the first to know",
+            "sign up now to get your own personalized timeline",
+            "science & technology new york",
+            "don’t miss what's happening",
+            "don't miss what's happening",
+            "join x today",
+            "what’s happening",
+            "what's happening",
+        ]
 
         # AI领域重要Twitter账号
         self.ai_influencers = {
@@ -79,22 +91,60 @@ class TwitterScraper:
                 'Accept': 'text/plain'
             }
 
-            print(f"  📥 通过Jina获取 @{username} 的推文...")
-            response = requests.get(jina_url, headers=headers, timeout=15)
+            for attempt in range(1, self.max_fetch_attempts + 1):
+                print(f"  📥 通过Jina获取 @{username} 的推文... (尝试 {attempt}/{self.max_fetch_attempts})")
+                response = requests.get(jina_url, headers=headers, timeout=15)
 
-            if response.status_code == 200:
+                if response.status_code != 200:
+                    print(f"  ✗ Jina返回状态码: {response.status_code}")
+                    break
+
                 content = response.text
 
                 # 解析推文内容（改进的方式）
                 tweets = self._parse_tweets_from_content(content, username)
-                print(f"  ✓ 成功获取 {len(tweets)} 条推文")
-            else:
-                print(f"  ✗ Jina返回状态码: {response.status_code}")
+                if tweets:
+                    print(f"  ✓ 成功获取 {len(tweets)} 条推文")
+                    break
+
+                if self._looks_like_placeholder_page(content) and attempt < self.max_fetch_attempts:
+                    print(f"  ⚠️ 检测到占位内容，准备重试 @{username}")
+                    time.sleep(1)
+                    continue
+
+                print(f"  ⚠️ @{username} 未解析到有效推文")
+                break
 
         except Exception as e:
             print(f"  ✗ 获取 @{username} 失败: {str(e)}")
 
         return tweets
+
+    def _normalize_text(self, text: str) -> str:
+        """归一化文本，便于规则匹配"""
+        normalized = text.lower()
+        normalized = normalized.replace("’", "'")
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        return normalized
+
+    def _contains_placeholder_marker(self, text: str) -> bool:
+        """判断内容是否包含占位文案"""
+        normalized = self._normalize_text(text)
+        return any(marker in normalized for marker in self.placeholder_markers)
+
+    def _looks_like_placeholder_page(self, content: str) -> bool:
+        """判断整页是否主要为占位信息"""
+        if self._contains_placeholder_marker(content):
+            return True
+
+        if "Markdown Content:" in content:
+            content = content.split("Markdown Content:", 1)[1]
+        paragraphs = [p.strip() for p in re.split(r'\n\s*\n+', content) if p.strip()]
+        if not paragraphs:
+            return True
+
+        placeholder_hits = sum(1 for p in paragraphs if self._contains_placeholder_marker(p))
+        return placeholder_hits >= 2
 
     def _parse_tweets_from_content(self, content: str, username: str) -> List[Dict[str, Any]]:
         """
@@ -143,8 +193,18 @@ class TwitterScraper:
             cleaned = re.sub(r'#\w+', '', cleaned)  # 移除话题标签
             cleaned = re.sub(r'\s+', ' ', cleaned).strip()  # 清理多余空格
 
+            if self._contains_placeholder_marker(cleaned):
+                print(f"  ↳ 跳过占位内容 @{username}: {cleaned[:80]}")
+                continue
+
             # 如果清理后还有足够的内容
-            if len(cleaned) > 20 and not re.match(r'^[\d\s\W]+$', cleaned):
+            if len(cleaned) < self.min_valid_content_length:
+                print(
+                    f"  ↳ 跳过过短内容 @{username}: 长度={len(cleaned)} < {self.min_valid_content_length}"
+                )
+                continue
+
+            if not re.match(r'^[\d\s\W]+$', cleaned):
                 tweets.append({
                     "text": cleaned,
                     "likes": 0,

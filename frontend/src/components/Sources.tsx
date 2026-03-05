@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Twitter, MessageCircle, Globe, Plus, X, Search, Trash2, CheckCircle2, Tag, Pencil } from 'lucide-react';
 import { fetchSources, addSource, deleteSource, updateSource, Source } from '../api';
+import { PaginationControls } from './PaginationControls';
 
 const PLATFORM_MAP: Record<string, string> = {
   twitter: 'twitter',
@@ -53,6 +54,8 @@ export function Sources() {
   const [activeTagFilter, setActiveTagFilter] = useState<string | null>(null);
   const [editingTagsId, setEditingTagsId] = useState<string | null>(null);
   const [tagInput, setTagInput] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   const platforms = [
     { id: 'twitter', name: 'Twitter / KOL', icon: <Twitter className="w-4 h-4" /> },
@@ -79,6 +82,14 @@ export function Sources() {
     const matchesTag = !activeTagFilter || (src.tags || []).includes(activeTagFilter);
     return matchesSearch && matchesTag;
   });
+  const totalPages = Math.max(1, Math.ceil(filteredSubs.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStart = (safeCurrentPage - 1) * pageSize;
+  const pageSources = filteredSubs.slice(pageStart, pageStart + pageSize);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, searchQuery, activeTagFilter, sources, pageSize]);
 
   const handleToggle = async (src: Source) => {
     const newStatus = src.status === 'active' ? 'paused' : 'active';
@@ -236,7 +247,7 @@ export function Sources() {
             </div>
           ) : (
             <div className="divide-y divide-gray-100">
-              {filteredSubs.map(src => (
+              {pageSources.map(src => (
                 <div key={src.id} className="p-4 hover:bg-gray-50 transition-colors group">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -324,6 +335,15 @@ export function Sources() {
             </div>
           )}
         </div>
+        {!loading && filteredSubs.length > 0 && (
+          <PaginationControls
+            totalItems={filteredSubs.length}
+            currentPage={safeCurrentPage}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+          />
+        )}
       </div>
     </div>
   );

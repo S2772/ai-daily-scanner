@@ -1,142 +1,124 @@
 #!/bin/bash
 
-# AI热点日报系统启动脚本
-# 作者: AI助手
-# 日期: 2026-02-25
+set -euo pipefail
 
-echo "=================================================="
-echo "    AI热点日报系统 - 现代化Web界面启动脚本"
-echo "=================================================="
-echo ""
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BACKEND_PID_FILE="$ROOT_DIR/.webapp.pid"
+FRONTEND_PID_FILE="$ROOT_DIR/.frontend.pid"
+LOG_DIR="$ROOT_DIR/logs"
+BACKEND_LOG="$LOG_DIR/backend.log"
+FRONTEND_LOG="$LOG_DIR/frontend.log"
 
-# 检查Python环境
-if ! command -v python3 &> /dev/null; then
-    echo "❌ 未找到Python3，请先安装Python3"
-    exit 1
-fi
+mkdir -p "$LOG_DIR"
 
-# 检查Flask是否安装
-if ! python3 -c "import flask" &> /dev/null; then
-    echo "⚠️  Flask未安装，正在安装Flask..."
-    pip3 install flask
-    if [ $? -ne 0 ]; then
-        echo "❌ Flask安装失败，请手动安装: pip3 install flask"
-        exit 1
+is_running() {
+  local pid_file="$1"
+  if [ ! -f "$pid_file" ]; then
+    return 1
+  fi
+  local pid
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  if [ -z "$pid" ]; then
+    return 1
+  fi
+  kill -0 "$pid" 2>/dev/null
+}
+
+start_backend() {
+  if is_running "$BACKEND_PID_FILE"; then
+    echo "Backend already running (PID $(cat "$BACKEND_PID_FILE"))."
+    return
+  fi
+
+  echo "Starting backend on http://127.0.0.1:6003 ..."
+  (
+    cd "$ROOT_DIR"
+    nohup python3 webapp.py 6003 > "$BACKEND_LOG" 2>&1 &
+    echo $! > "$BACKEND_PID_FILE"
+  )
+  echo "Backend started (PID $(cat "$BACKEND_PID_FILE"))."
+}
+
+start_frontend() {
+  if is_running "$FRONTEND_PID_FILE"; then
+    echo "Frontend already running (PID $(cat "$FRONTEND_PID_FILE"))."
+    return
+  fi
+
+  echo "Starting frontend on http://127.0.0.1:3000 ..."
+  (
+    cd "$ROOT_DIR/frontend"
+    nohup npm run dev > "$FRONTEND_LOG" 2>&1 &
+    echo $! > "$FRONTEND_PID_FILE"
+  )
+  echo "Frontend started (PID $(cat "$FRONTEND_PID_FILE"))."
+}
+
+stop_service() {
+  local name="$1"
+  local pid_file="$2"
+
+  if ! is_running "$pid_file"; then
+    rm -f "$pid_file"
+    echo "$name is not running."
+    return
+  fi
+
+  local pid
+  pid="$(cat "$pid_file")"
+  echo "Stopping $name (PID $pid) ..."
+  kill "$pid" 2>/dev/null || true
+
+  for _ in {1..20}; do
+    if kill -0 "$pid" 2>/dev/null; then
+      sleep 0.2
+    else
+      break
     fi
-    echo "✅ Flask安装成功"
-fi
+  done
 
-# 检查数据库文件
-if [ ! -f "ai_daily.db" ]; then
-    echo "⚠️  数据库文件不存在，将创建空数据库"
-    echo "    请运行爬虫脚本填充数据: python3 scraper.py"
-fi
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "$name did not exit in time, sending SIGKILL."
+    kill -9 "$pid" 2>/dev/null || true
+  fi
 
-# 检查必要的文件
-if [ ! -f "webapp.py" ]; then
-    echo "❌ webapp.py不存在"
+  rm -f "$pid_file"
+  echo "$name stopped."
+}
+
+status() {
+  if is_running "$BACKEND_PID_FILE"; then
+    echo "Backend: running (PID $(cat "$BACKEND_PID_FILE"))"
+  else
+    echo "Backend: stopped"
+  fi
+
+  if is_running "$FRONTEND_PID_FILE"; then
+    echo "Frontend: running (PID $(cat "$FRONTEND_PID_FILE"))"
+  else
+    echo "Frontend: stopped"
+  fi
+}
+
+case "${1:-start}" in
+  start)
+    start_backend
+    start_frontend
+    echo "Logs: $BACKEND_LOG, $FRONTEND_LOG"
+    ;;
+  stop)
+    stop_service "Frontend" "$FRONTEND_PID_FILE"
+    stop_service "Backend" "$BACKEND_PID_FILE"
+    ;;
+  restart)
+    "$0" stop
+    "$0" start
+    ;;
+  status)
+    status
+    ;;
+  *)
+    echo "Usage: $0 [start|stop|restart|status]"
     exit 1
-fi
-
-if [ ! -d "templates" ]; then
-    echo "❌ templates目录不存在"
-    exit 1
-fi
-
-if [ ! -d "static" ]; then
-    echo "❌ static目录不存在"
-    exit 1
-fi
-
-# 检查模板和静态文件
-if [ ! -f "templates/dashboard.html" ]; then
-    echo "⚠️  templates/dashboard.html不存在"
-fi
-
-if [ ! -f "static/dashboard.css" ]; then
-    echo "⚠️  static/dashboard.css不存在"
-fi
-
-if [ ! -f "static/dashboard.js" ]; then
-    echo "⚠️  static/dashboard.js不存在"
-fi
-
-echo ""
-echo "✅ 环境检查完成"
-echo ""
-
-# 显示系统信息
-echo "系统信息:"
-echo "  Python版本: $(python3 --version)"
-echo "  Flask版本: $(python3 -c "import flask; print(flask.__version__)")"
-echo "  工作目录: $(pwd)"
-echo "  数据库: $(ls -la ai_daily.db 2>/dev/null || echo '不存在')"
-echo ""
-
-# 启动选项
-echo "请选择启动选项:"
-echo "  1) 正常启动 (默认端口 5000)"
-echo "  2) 指定端口启动"
-echo "  3) 调试模式启动"
-echo "  4) 查看帮助"
-echo "  5) 退出"
-echo ""
-
-read -p "请输入选项 [1-5]: " choice
-
-case $choice in
-    1)
-        echo "正在启动服务器..."
-        python3 webapp.py
-        ;;
-    2)
-        read -p "请输入端口号: " port
-        if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
-            echo "❌ 无效的端口号，请输入1024-65535之间的数字"
-            exit 1
-        fi
-        echo "正在启动服务器，端口: $port..."
-        python3 webapp.py --port $port
-        ;;
-    3)
-        echo "正在启动调试模式..."
-        export FLASK_ENV=development
-        python3 webapp.py
-        ;;
-    4)
-        echo ""
-        echo "帮助信息:"
-        echo "  1. 首次使用请确保已安装Python3和Flask"
-        echo "  2. 数据库文件会自动创建，但需要运行爬虫填充数据"
-        echo "  3. 访问地址: http://localhost:5000"
-        echo "  4. 默认端口为5000，如果被占用可以指定其他端口"
-        echo "  5. 调试模式会显示更详细的错误信息"
-        echo ""
-        echo "文件结构:"
-        echo "  webapp.py        - Web服务器主程序"
-        echo "  templates/       - HTML模板文件"
-        echo "  static/          - CSS和JavaScript文件"
-        echo "  ai_daily.db      - SQLite数据库"
-        echo "  scraper.py       - 数据爬虫脚本"
-        echo "  start.sh         - 此启动脚本"
-        echo ""
-        echo "常见问题:"
-        echo "  Q: 页面显示空白或错误？"
-        echo "  A: 检查templates和static目录下的文件是否存在"
-        echo ""
-        echo "  Q: 没有数据？"
-        echo "  A: 运行爬虫脚本: python3 scraper.py"
-        echo ""
-        echo "  Q: 端口被占用？"
-        echo "  A: 使用选项2指定其他端口"
-        echo ""
-        ;;
-    5)
-        echo "退出"
-        exit 0
-        ;;
-    *)
-        echo "使用默认选项: 正常启动"
-        python3 webapp.py
-        ;;
+    ;;
 esac

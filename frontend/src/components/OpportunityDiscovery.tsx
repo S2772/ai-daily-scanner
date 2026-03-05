@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { fetchOpportunities, fetchLatestDate, fetchHotspots, Opportunity as ApiOpportunity, Hotspot } from '../api';
-import { Lightbulb, TrendingUp, ArrowRight, ArrowLeft, Calendar, ChevronDown, FileText, CheckCircle2, Flame, Newspaper, Target } from 'lucide-react';
+import { fetchOpportunities, fetchHotspots, fetchSourceStatus, Opportunity as ApiOpportunity, Hotspot, DateFilter } from '../api';
+import { DateScopeDropdown } from './DateScopeDropdown';
+import { PaginationControls } from './PaginationControls';
+import { DataStatusPanel } from './DataStatusPanel';
+import { createNoDataHint, createRequestErrorHint, DataStatusHint } from '../dataStatus';
+import { Lightbulb, TrendingUp, ArrowRight, ArrowLeft, FileText, CheckCircle2, Flame, Newspaper } from 'lucide-react';
+import { getTopicTagClass } from '../topicColors';
 
 function getRelatedHotspots(opp: ApiOpportunity, hotspots: Hotspot[]): Hotspot[] {
   const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'is', 'are', 'was', 'were', 'be', 'been', 'has', 'have', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those', 'it', 'its', 'by', 'from', 'as', 'into', 'through', 'before', 'after', 'out', 'over', 'then', 'when', 'where', 'how', 'all', 'more', 'most', 'other', 'some', 'no', 'not', 'only', 'same', 'so', 'than', 'too', 'very', 'just', 'but', 'if', 'about', 'up', 'what', 'which', 'who']);
@@ -25,9 +30,11 @@ interface OpportunityDiscoveryProps {
 }
 
 export function OpportunityDiscovery({ setActiveTab, onSelectHotspot, selectedOppId, onClearSelection }: OpportunityDiscoveryProps) {
+  const now = new Date();
+  const currentDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const [selectedOpp, setSelectedOpp] = useState<ApiOpportunity | null>(null);
   const [timeRange, setTimeRange] = useState('Today');
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [dateFilter, setDateFilter] = useState<DateFilter>({ date: currentDate });
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [opportunities, setOpportunities] = useState<ApiOpportunity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,11 +43,30 @@ export function OpportunityDiscovery({ setActiveTab, onSelectHotspot, selectedOp
   const [saved, setSaved] = useState(false);
   const [relatedHotspots, setRelatedHotspots] = useState<Hotspot[]>([]);
   const [loadingRelated, setLoadingRelated] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [emptyStatus, setEmptyStatus] = useState<DataStatusHint | null>(null);
+
+  const loadOpportunities = async (filter: DateFilter) => {
+    setLoading(true);
+    setEmptyStatus(null);
+    try {
+      const opps = await fetchOpportunities(filter, 200);
+      setOpportunities(opps);
+      if (opps.length === 0) {
+        const statuses = await fetchSourceStatus(filter);
+        setEmptyStatus(createNoDataHint(statuses));
+      }
+    } catch (error) {
+      setOpportunities([]);
+      setEmptyStatus(createRequestErrorHint(error, 'Opportunity 数据加载失败'));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    fetchLatestDate().then(d => fetchOpportunities(d, 50))
-      .then(opps => { setOpportunities(opps); setLoading(false); })
-      .catch(() => setLoading(false));
+    loadOpportunities(dateFilter);
   }, []);
 
   // Auto-select opp when selectedOppId is provided
@@ -58,17 +84,24 @@ export function OpportunityDiscovery({ setActiveTab, onSelectHotspot, selectedOp
   useEffect(() => {
     if (!selectedOpp) { setRelatedHotspots([]); return; }
     setLoadingRelated(true);
-    fetchLatestDate().then(d => fetchHotspots(d, 100))
+    fetchHotspots(dateFilter, 200, false)
       .then(({ hotspots }) => {
         setRelatedHotspots(getRelatedHotspots(selectedOpp, hotspots));
         setLoadingRelated(false);
       })
       .catch(() => setLoadingRelated(false));
-  }, [selectedOpp]);
+  }, [selectedOpp, dateFilter]);
 
-  const timeOptions = ['Today', 'Yesterday', 'This Week', 'This Month', 'All Time'];
   const allTags = Array.from(new Set(opportunities.flatMap(o => o.domains)));
   const filteredOpps = activeTag ? opportunities.filter(o => o.domains.includes(activeTag)) : opportunities;
+  const totalPages = Math.max(1, Math.ceil(filteredOpps.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStart = (safeCurrentPage - 1) * pageSize;
+  const pageOpps = filteredOpps.slice(pageStart, pageStart + pageSize);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTag, opportunities, pageSize]);
 
   const handleSaveNote = async () => {
     if (!intelligenceNote.trim() || !selectedOpp) return;
@@ -104,7 +137,7 @@ export function OpportunityDiscovery({ setActiveTab, onSelectHotspot, selectedOp
                   {selectedOpp.domains.map(tag => (
                     <span key={tag} className="text-[10px] px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-100 rounded-full font-medium">{tag}</span>
                   ))}
-                  <span className="text-[10px] px-2 py-0.5 bg-gray-50 text-gray-600 border border-gray-100 rounded-full font-medium">{selectedOpp.category}</span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${getTopicTagClass(selectedOpp.category)}`}>{selectedOpp.category}</span>
                 </div>
                 <div className="flex items-start justify-between gap-4">
                   <h1 className="text-2xl font-semibold tracking-tight leading-tight text-gray-900">{selectedOpp.title}</h1>
@@ -220,7 +253,7 @@ export function OpportunityDiscovery({ setActiveTab, onSelectHotspot, selectedOp
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
                   <FileText className="w-5 h-5 text-emerald-600" />
-                  Intelligence Notes
+                  Insight Notes
                 </h3>
                 <button
                   onClick={handleSaveNote}
@@ -232,7 +265,7 @@ export function OpportunityDiscovery({ setActiveTab, onSelectHotspot, selectedOp
                   ) : saved ? (
                     <span className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" /> Saved</span>
                   ) : (
-                    <span className="flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Save to Intelligence</span>
+                    <span className="flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Save to Insight</span>
                   )}
                 </button>
               </div>
@@ -256,26 +289,16 @@ export function OpportunityDiscovery({ setActiveTab, onSelectHotspot, selectedOp
           <h1 className="text-xl font-semibold tracking-tight">Opportunity</h1>
           <p className="text-gray-500 text-xs">AI-generated business trends based on high-frequency tags.</p>
         </div>
-        <div className="relative">
-          <button
-            onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-            className="flex items-center gap-2 px-3 py-1.5 bg-white border border-[#EAEAEA] rounded-md text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm"
-          >
-            <Calendar className="w-3.5 h-3.5 text-gray-400" />
-            {timeRange}
-            <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
-          </button>
-          {isDropdownOpen && (
-            <div className="absolute right-0 mt-1 w-36 bg-white border border-[#EAEAEA] rounded-md shadow-lg z-10 py-1">
-              {timeOptions.map(option => (
-                <button key={option} onClick={() => { setTimeRange(option); setIsDropdownOpen(false); }}
-                  className={`w-full text-left px-3 py-1.5 text-xs ${timeRange === option ? 'bg-purple-50 text-purple-700 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}>
-                  {option}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <DateScopeDropdown
+          label={timeRange}
+          onChange={(label, filter) => {
+            setTimeRange(label);
+            setDateFilter(filter);
+            setActiveTag(null);
+            setSelectedOpp(null);
+            loadOpportunities(filter);
+          }}
+        />
       </div>
 
       <div className="flex flex-col gap-4 mb-4">
@@ -299,11 +322,13 @@ export function OpportunityDiscovery({ setActiveTab, onSelectHotspot, selectedOp
 
       {loading ? (
         <div className="flex items-center justify-center py-16 text-gray-400 text-sm">Loading...</div>
+      ) : opportunities.length === 0 ? (
+        <DataStatusPanel status={emptyStatus || createNoDataHint([])} />
       ) : filteredOpps.length === 0 ? (
-        <div className="flex items-center justify-center py-16 text-gray-400 text-sm">No opportunities found for today.</div>
+        <div className="flex items-center justify-center py-16 text-gray-400 text-sm">No opportunities match current tag filter.</div>
       ) : (
         <div className="space-y-4">
-          {filteredOpps.map(opp => (
+          {pageOpps.map(opp => (
             <div key={opp.id} onClick={() => setSelectedOpp(opp)}
               className="bg-white border border-[#EAEAEA] rounded-xl p-6 hover:border-purple-500/40 hover:shadow-md transition-all group cursor-pointer relative">
               <div className="flex justify-between items-start mb-4">
@@ -315,7 +340,7 @@ export function OpportunityDiscovery({ setActiveTab, onSelectHotspot, selectedOp
                     {opp.domains.map(tag => (
                       <span key={tag} className="text-[10px] px-2 py-0.5 bg-purple-50/50 text-purple-600 border border-purple-100 rounded-full font-medium">{tag}</span>
                     ))}
-                    <span className="text-[10px] px-2 py-0.5 bg-gray-50 text-gray-500 border border-gray-100 rounded-full">{opp.category}</span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${getTopicTagClass(opp.category)}`}>{opp.category}</span>
                   </div>
                   <p className="text-xs text-gray-600 line-clamp-2">{opp.description}</p>
                 </div>
@@ -339,6 +364,13 @@ export function OpportunityDiscovery({ setActiveTab, onSelectHotspot, selectedOp
               </div>
             </div>
           ))}
+          <PaginationControls
+            totalItems={filteredOpps.length}
+            currentPage={safeCurrentPage}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+          />
         </div>
       )}
     </div>

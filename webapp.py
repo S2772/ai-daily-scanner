@@ -7,12 +7,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
+import shutil
 import sqlite3
+import subprocess
+import traceback
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 from urllib.parse import parse_qs, urlparse
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -27,9 +32,14 @@ import requests
 
 # AI API 配置
 AI_API_CONFIG = {
-    "base_url": "https://bobdong.cn/v1/chat/completions",
-    "api_key": "sk-pkTNOMFFkTCohLxN8Fswqhr5pCbPxypDHRy8hoATEFbIO2El",
-    "model": "claude-haiku-4-5-20251001"
+    "base_url": os.getenv("AI_API_BASE_URL", "https://bobdong.cn/v1/chat/completions"),
+    "api_key": os.getenv("AI_API_KEY", "sk-pkTNOMFFkTCohLxN8Fswqhr5pCbPxypDHRy8hoATEFbIO2El"),
+    "model": os.getenv("AI_API_MODEL", "claude-sonnet-4"),
+    "fallback_models": [
+        m.strip()
+        for m in os.getenv("AI_API_FALLBACK_MODELS", "claude-sonnet-3.5,gpt-5.2,gpt-4.1").split(",")
+        if m.strip()
+    ],
 }
 
 def _load_summary_system_prompt() -> str:
@@ -38,72 +48,256 @@ def _load_summary_system_prompt() -> str:
     except Exception:
         return ""
 
-def generate_ai_summary(text: str, title: str = "") -> Dict[str, str]:
-    """调用 summary agent 生成深度中文摘要，返回 {"summary": str, "title_zh": str}"""
-    import re
-    if not text or len(text.strip()) < 10:
-        return {"summary": "内容太短，无法生成摘要", "title_zh": ""}
+def _contains_chinese(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", text or ""))
 
-    is_foreign = bool(title) and not bool(re.search(r'[\u4e00-\u9fff]', title))
+def _clean_text(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "")).strip()
 
-    user_msg = f"""请对以下AI热点内容生成深度中文摘要，返回JSON格式：
-{{"summary":"150-250字摘要，有叙事感，直击痛点，揭示底层逻辑，开门见山","title_zh":"外文标题的中文翻译，中文标题则为空字符串","content_type":"深度文章或行业新闻或KOL言论"}}
+def _strip_code_fence(text: str) -> str:
+    content = (text or "").strip()
+    if content.startswith("```"):
+        content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    return content
 
-只返回JSON，不要其他内容。
+def _call_openclaw_agent(prompt: str, timeout: int = 45) -> str:
+    enabled = (os.getenv("OPENCLAW_TRANSLATION_FALLBACK", "1") or "").strip().lower()
+    if enabled not in {"1", "true", "yes"}:
+        return ""
+    if not shutil.which("openclaw"):
+        return ""
 
-标题：{title}
+    agent_id = (os.getenv("OPENCLAW_TRANSLATION_AGENT", "main") or "main").strip()
+    cmd = ["openclaw", "agent", "--agent", agent_id, "--message", prompt, "--json"]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except Exception:
+        return ""
 
-内容：{text[:3000]}"""
+    if proc.returncode != 0:
+        return ""
 
     try:
-        headers = {
-            "Authorization": f"Bearer {AI_API_CONFIG['api_key']}",
-            "Content-Type": "application/json"
-        }
-        data = {
-            "model": AI_API_CONFIG["model"],
-            "messages": [{"role": "user", "content": user_msg}],
-            "max_tokens": 800,
-            "temperature": 0.7
-        }
-        response = requests.post(AI_API_CONFIG["base_url"], headers=headers, json=data, timeout=30)
-        if response.status_code != 200:
-            return {"summary": f"API错误: {response.status_code}", "title_zh": ""}
+        payload = json.loads(proc.stdout or "{}")
+        blocks = payload.get("result", {}).get("payloads", [])
+        if blocks and isinstance(blocks[0], dict):
+            return _clean_text(str(blocks[0].get("text", "")))
+    except Exception:
+        pass
+    return ""
 
-        content = response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-        if not content:
-            return {"summary": "生成失败: 空响应", "title_zh": ""}
-
-        # 检测模型拒绝响应
-        if any(kw in content for kw in ["I'm Kiro", "I am Kiro", "as Kiro", "I'm an AI"]):
-            # 降级：用简单提示重试
-            simple_msg = f"用中文总结以下内容（100字以内），只返回JSON {{\"summary\":\"...\",\"title_zh\":\"...\"}}：\n标题：{title}\n{text[:1000]}"
-            data2 = {**data, "messages": [{"role": "user", "content": simple_msg}]}
-            r2 = requests.post(AI_API_CONFIG["base_url"], headers=headers, json=data2, timeout=30)
-            if r2.status_code == 200:
-                content = r2.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip() or content
-
-        # 去掉 markdown 代码块
-        if content.startswith("```"):
-            content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-
+def _extract_json_payload(text: str) -> Dict[str, Any]:
+    content = _strip_code_fence(text)
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+    match = re.search(r"\{[\s\S]*\}", content)
+    if match:
         try:
-            parsed = json.loads(content)
-            return {
-                "summary": parsed.get("summary", "").strip(),
-                "title_zh": parsed.get("title_zh", "").strip()
-            }
-        except json.JSONDecodeError:
-            # 非JSON时直接用内容作为摘要
-            title_zh = ""
-            if is_foreign:
-                m = re.search(r'"title_zh"\s*:\s*"([^"]+)"', content)
-                if m:
-                    title_zh = m.group(1)
-            return {"summary": content[:500], "title_zh": title_zh}
+            parsed = json.loads(match.group(0))
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    return {}
 
-    except Exception as e:
-        return {"summary": f"生成失败: {str(e)}", "title_zh": ""}
+def _call_chat_completion(messages: List[Dict[str, str]], max_tokens: int = 800, temperature: float = 0.5, timeout: int = 45) -> str:
+    models: List[str] = []
+    primary = str(AI_API_CONFIG.get("model", "")).strip()
+    if primary:
+        models.append(primary)
+    for m in AI_API_CONFIG.get("fallback_models", []):
+        if m not in models:
+            models.append(m)
+    if not models:
+        models = ["gpt-5.2-codex"]
+
+    headers = {
+        "Authorization": f"Bearer {AI_API_CONFIG['api_key']}",
+        "Content-Type": "application/json",
+    }
+    last_error = ""
+    for model in models:
+        data = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        try:
+            resp = requests.post(AI_API_CONFIG["base_url"], headers=headers, json=data, timeout=timeout)
+        except Exception as exc:
+            last_error = f"{model}:request_failed:{exc}"
+            continue
+        if resp.status_code != 200:
+            last_error = f"{model}:upstream_status_{resp.status_code}"
+            continue
+        try:
+            content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            if content:
+                return content
+            last_error = f"{model}:empty_content"
+        except Exception as exc:
+            last_error = f"{model}:invalid_json:{exc}"
+            continue
+    raise RuntimeError(last_error or "all_models_failed")
+
+def _translate_title_to_chinese(title: str) -> str:
+    title = _clean_text(title)
+    if not title:
+        return ""
+    if _contains_chinese(title):
+        return title
+    prompt = f"请把下面标题翻译成简体中文，只返回译文，不要解释：\n{title}"
+    try:
+        translated = _strip_code_fence(_call_chat_completion([{"role": "user", "content": prompt}], max_tokens=120, temperature=0.2, timeout=30))
+        translated = translated.splitlines()[0].strip().strip('"')
+        if translated and _contains_chinese(translated):
+            return translated
+    except Exception:
+        pass
+
+    translated = _call_openclaw_agent(
+        f"请把下面标题翻译成简体中文，只返回译文，不要解释：\n{title}",
+        timeout=35,
+    )
+    if translated and _contains_chinese(translated):
+        return translated
+
+    return title
+
+def _translate_summary_to_chinese(summary: str) -> str:
+    summary = _clean_text(summary)
+    if not summary:
+        return summary
+    if _contains_chinese(summary):
+        zh_count = len(re.findall(r"[\u4e00-\u9fff]", summary))
+        en_count = len(re.findall(r"[A-Za-z]", summary))
+        if zh_count > 0 and en_count <= zh_count * 2:
+            return summary
+    prompt = f"请把下面内容翻译成简体中文，并保持信息完整：\n{summary[:1000]}"
+    try:
+        translated = _strip_code_fence(_call_chat_completion([{"role": "user", "content": prompt}], max_tokens=450, temperature=0.2, timeout=35))
+        translated = _clean_text(translated)
+        if translated and _contains_chinese(translated):
+            return translated
+    except Exception:
+        pass
+
+    translated = _call_openclaw_agent(
+        f"请把下面内容翻译成简体中文，并保持信息完整：\n{summary[:1000]}",
+        timeout=45,
+    )
+    if translated and _contains_chinese(translated):
+        return translated
+
+    return summary
+
+def _fallback_summary(text: str, title: str = "") -> str:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return "暂无可用内容。"
+    lowered = cleaned.lower()
+    broken_signals = [
+        "the media could not be played",
+        "temporarily unavailable",
+        "access denied",
+        "unsupported browser",
+        "content is unavailable",
+    ]
+    if any(signal in lowered for signal in broken_signals):
+        return "原文抓取失败，源站返回了错误提示文案。请稍后重试抓取或检查该来源是否可访问。"
+    if _contains_chinese(cleaned):
+        return f"{cleaned[:220]}..."
+    if len(cleaned) <= 260:
+        return f"原文摘录：{cleaned}"
+    return f"原文要点摘录：{cleaned[:260]}..."
+
+def generate_ai_summary(text: str, title: str = "") -> Dict[str, str]:
+    """调用 summary agent 生成深度中文摘要，返回 {"summary": str, "title_zh": str}"""
+    if not text or len(text.strip()) < 10:
+        return {"summary": "内容太短，无法生成摘要", "title_zh": _translate_title_to_chinese(title)}
+
+    system_prompt = _load_summary_system_prompt().strip()
+    user_msg = f"""请对以下AI热点内容生成中文摘要。
+
+**输出格式**（必须严格遵守）：
+```json
+{{
+  "summary": "150-220字的简体中文摘要，结构清晰，直击重点",
+  "title_zh": "中文标题"
+}}
+```
+
+**要求**：
+1. summary 必须是简体中文，不要加"原文摘录："等前缀
+2. title_zh 必须是中文（如果原标题已经是中文就保持原样）
+3. 只返回 JSON 对象，不要有其他文字
+
+**原文**：
+标题：{title}
+内容：{text[:3500]}"""
+
+    messages: List[Dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_msg})
+
+    fallback_title = _translate_title_to_chinese(title)
+    last_error = ""
+    for attempt in range(2):
+        try:
+            content = _call_chat_completion(messages, max_tokens=800 if attempt == 0 else 500, temperature=0.4 if attempt == 0 else 0.2)
+            if not content:
+                last_error = "empty_response"
+                continue
+
+            parsed = _extract_json_payload(content)
+            if parsed and parsed.get("summary"):
+                summary = _clean_text(str(parsed.get("summary", "")))
+                title_zh = _clean_text(str(parsed.get("title_zh", "")))
+            else:
+                # JSON 解析失败，尝试从文本中提取
+                clean_content = content.strip()
+                # 移除常见前缀
+                for prefix in ["原文摘录：", "原文要点摘录：", "摘要：", "Summary:", "内容摘要："]:
+                    if clean_content.startswith(prefix):
+                        clean_content = clean_content[len(prefix):].strip()
+                summary = _clean_text(clean_content)
+                title_zh = ""
+
+            if not summary:
+                last_error = "empty_summary"
+                continue
+
+            summary = _translate_summary_to_chinese(summary)
+            if not _contains_chinese(summary):
+                summary = _fallback_summary(text, title)
+
+            if not title_zh:
+                title_zh = fallback_title
+            elif not _contains_chinese(title_zh):
+                title_zh = _translate_title_to_chinese(title_zh)
+
+            if not title_zh:
+                title_zh = fallback_title
+
+            return {"summary": summary[:600], "title_zh": title_zh}
+        except Exception as exc:
+            last_error = str(exc)
+
+    fallback_summary = _fallback_summary(text, title)
+    fallback_summary = _translate_summary_to_chinese(fallback_summary)
+    return {"summary": fallback_summary, "title_zh": fallback_title}
 
 
 def init_sources_meta_table(conn: sqlite3.Connection) -> None:
@@ -289,6 +483,75 @@ def connect_db() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
 
+    # 确保核心表存在，避免新库或空库时直接查询导致 500
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS hotspots (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            content TEXT,
+            url TEXT,
+            source TEXT,
+            category TEXT,
+            tags TEXT,
+            ai_summary TEXT,
+            innovation_score INTEGER DEFAULT 0,
+            commercial_score INTEGER DEFAULT 0,
+            tech_score INTEGER DEFAULT 0,
+            investment_score INTEGER DEFAULT 0,
+            total_score INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS opportunities (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT,
+            category TEXT,
+            potential_score INTEGER DEFAULT 0,
+            competition_level TEXT,
+            resources_needed TEXT,
+            timeline TEXT,
+            pain_points TEXT,
+            blue_ocean_opportunity TEXT,
+            monetization_potential TEXT,
+            domains TEXT,
+            priority TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS notes (
+            id TEXT PRIMARY KEY,
+            hotspot_id TEXT,
+            content TEXT,
+            tags TEXT,
+            is_important BOOLEAN DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (hotspot_id) REFERENCES hotspots (id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS source_status (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            item_count INTEGER DEFAULT 0,
+            error_message TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
     # 数据库迁移：添加缺失列
     cursor = conn.cursor()
     for col, ddl in [("ai_summary", "TEXT"), ("title_zh", "TEXT")]:
@@ -350,6 +613,26 @@ def serialize_hotspot(row: sqlite3.Row) -> Dict[str, Any]:
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
+    def _handle_uncaught_error(self, exc: Exception) -> None:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        detail = f"{exc.__class__.__name__}: {exc}"
+        traceback.print_exc()
+
+        if self.path.startswith("/api/"):
+            json_response(
+                self,
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {
+                    "ok": False,
+                    "error": "服务内部错误，请稍后重试",
+                    "timestamp": timestamp,
+                    "detail": detail,
+                },
+            )
+            return
+
+        self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Internal Server Error")
+
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -358,89 +641,107 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
-        parsed = urlparse(self.path)
-        path = parsed.path
-        query = parse_qs(parsed.query)
+        try:
+            parsed = urlparse(self.path)
+            path = parsed.path
+            query = parse_qs(parsed.query)
 
-        if path == "/":
-            self.serve_dashboard()
-            return
-        if path.startswith("/static/"):
-            self.serve_static(path)
-            return
-        if path == "/api/summary":
-            self.handle_summary(query)
-            return
-        if path == "/api/trend":
-            self.handle_trend(query)
-            return
-        if path == "/api/latest-date":
-            self.handle_latest_date()
-            return
-        if path == "/api/hotspots":
-            self.handle_hotspots(query)
-            return
-        if path.startswith("/api/hotspots/"):
-            hotspot_id = path[len("/api/hotspots/"):]
-            if hotspot_id:
-                self.handle_hotspot_detail(hotspot_id)
+            if path == "/":
+                self.serve_dashboard()
                 return
-        if path == "/api/source-status":
-            self.handle_source_status(query)
-            return
-        if path == "/api/opportunities":
-            self.handle_opportunities(query)
-            return
-        if path == "/api/notes":
-            self.handle_notes(query)
-            return
-        if path == "/api/export":
-            self.handle_export(query)
-            return
-        if path == "/api/generate-summary":
-            self.handle_generate_summary(query)
-            return
-        if path == "/api/regen-summaries":
-            self.handle_regen_summaries()
-            return
-        if path == "/api/sources":
-            self.handle_sources_get()
-            return
+            if path.startswith("/static/"):
+                self.serve_static(path)
+                return
+            if path == "/api/summary":
+                self.handle_summary(query)
+                return
+            if path == "/api/trend":
+                self.handle_trend(query)
+                return
+            if path == "/api/latest-date":
+                self.handle_latest_date()
+                return
+            if path == "/api/hotspots":
+                self.handle_hotspots(query)
+                return
+            if path == "/api/hotspots-source-groups":
+                self.handle_hotspot_source_groups(query)
+                return
+            if path.startswith("/api/hotspots/"):
+                hotspot_id = path[len("/api/hotspots/"):]
+                if hotspot_id:
+                    self.handle_hotspot_detail(hotspot_id)
+                    return
+            if path == "/api/source-status":
+                self.handle_source_status(query)
+                return
+            if path == "/api/opportunities":
+                self.handle_opportunities(query)
+                return
+            if path == "/api/notes":
+                self.handle_notes(query)
+                return
+            if path == "/api/export":
+                self.handle_export(query)
+                return
+            if path == "/api/generate-summary":
+                self.handle_generate_summary(query)
+                return
+            if path == "/api/regen-summaries":
+                self.handle_regen_summaries()
+                return
+            if path == "/api/sources":
+                self.handle_sources_get()
+                return
+            if path == "/api/collect-runs":
+                self.handle_collect_runs(query)
+                return
 
-        self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+            self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+        except Exception as exc:
+            self._handle_uncaught_error(exc)
 
     def do_POST(self) -> None:
-        parsed = urlparse(self.path)
-        if parsed.path == "/api/collect":
-            self.handle_collect()
-            return
-        if parsed.path == "/api/notes":
-            self.handle_add_note()
-            return
-        if parsed.path == "/api/sources":
-            self.handle_sources_post()
-            return
-        self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+        try:
+            parsed = urlparse(self.path)
+            if parsed.path == "/api/collect":
+                self.handle_collect()
+                return
+            if parsed.path == "/api/notes":
+                self.handle_add_note()
+                return
+            if parsed.path == "/api/sources":
+                self.handle_sources_post()
+                return
+            self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+        except Exception as exc:
+            self._handle_uncaught_error(exc)
 
     def do_PUT(self) -> None:
-        parsed = urlparse(self.path)
-        path = parsed.path
-        if path.startswith("/api/sources/"):
-            src_id = path[len("/api/sources/"):]
-            if src_id:
-                self.handle_sources_put(src_id)
-                return
-        self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+        try:
+            parsed = urlparse(self.path)
+            path = parsed.path
+            if path.startswith("/api/sources/"):
+                src_id = path[len("/api/sources/"):]
+                if src_id:
+                    self.handle_sources_put(src_id)
+                    return
+            self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+        except Exception as exc:
+            self._handle_uncaught_error(exc)
 
     def do_DELETE(self) -> None:
-        parsed = urlparse(self.path)
-        path = parsed.path
-        if path.startswith("/api/sources/"):
-            src_id = path[len("/api/sources/"):]
-            if src_id:
-                self.handle_sources_delete(src_id)
-                return
-        self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+        try:
+            parsed = urlparse(self.path)
+            path = parsed.path
+            if path.startswith("/api/sources/"):
+                src_id = path[len("/api/sources/"):]
+                if src_id:
+                    self.handle_sources_delete(src_id)
+                    return
+            self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+        except Exception as exc:
+            self._handle_uncaught_error(exc)
 
     def serve_dashboard(self) -> None:
         if not TEMPLATE_FILE.exists():
@@ -482,44 +783,203 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _query_date(self, query: Dict[str, List[str]]) -> str:
         return query.get("date", [datetime.now().strftime("%Y-%m-%d")])[0]
 
-    def handle_collect(self) -> None:
-        scraper = AIScraper(DB_PATH)
-        hotspots_count, opportunities_count = scraper.run_daily_collection()
-        json_response(
-            self,
-            HTTPStatus.OK,
-            {
-                "ok": True,
-                "hotspots_count": hotspots_count,
-                "opportunities_count": opportunities_count,
-                "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            },
-        )
+    def _build_date_filter(
+        self, query: Dict[str, List[str]], column: str
+    ) -> Tuple[str, List[str], Dict[str, str]]:
+        all_time = (query.get("all_time", [""])[0] or "").strip().lower()
+        date = (query.get("date", [""])[0] or "").strip()
+        start_date = (query.get("start_date", [""])[0] or "").strip()
+        end_date = (query.get("end_date", [""])[0] or "").strip()
 
-    def handle_summary(self, query: Dict[str, List[str]]) -> None:
-        date = self._query_date(query)
+        if all_time in {"1", "true", "yes"}:
+            return "1=1", [], {"all_time": "1"}
+
+        if date:
+            return f"date({column}) = date(?)", [date], {"date": date}
+
+        if start_date or end_date:
+            start = start_date or end_date
+            end = end_date or start_date
+            if start and end and start > end:
+                start, end = end, start
+            return (
+                f"date({column}) BETWEEN date(?) AND date(?)",
+                [start or "", end or ""],
+                {"start_date": start or "", "end_date": end or ""},
+            )
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        return f"date({column}) = date(?)", [today], {"date": today}
+
+    def handle_collect_runs(self, query: Dict[str, List[str]]) -> None:
+        try:
+            limit = int(query.get("limit", ["30"])[0])
+        except ValueError:
+            limit = 30
+        limit = max(1, min(200, limit))
+
         conn = connect_db()
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) AS cnt FROM hotspots WHERE date(created_at) = date(?)", (date,))
+        cursor.execute(
+            """
+            SELECT id, started_at, finished_at, status,
+                   hotspots_inserted, opportunities_count,
+                   sources_success, sources_empty, sources_error,
+                   items_total, items_new, items_existing,
+                   notes
+            FROM collect_runs
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        runs = [dict(r) for r in cursor.fetchall()]
+
+        # attach date breakdown
+        for r in runs:
+            cursor.execute(
+                """
+                SELECT content_date, item_count
+                FROM collect_run_date_breakdown
+                WHERE run_id = ?
+                ORDER BY content_date DESC
+                """,
+                (r["id"],),
+            )
+            r["date_breakdown"] = [dict(x) for x in cursor.fetchall()]
+
+        conn.close()
+        json_response(self, HTTPStatus.OK, {"ok": True, "runs": runs})
+
+    def handle_collect(self) -> None:
+        started_at = datetime.now()
+        scraper = AIScraper(DB_PATH)
+
+        conn = connect_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO collect_runs (started_at, status)
+            VALUES (?, ?)
+            """,
+            (started_at.strftime("%Y-%m-%d %H:%M:%S"), "running"),
+        )
+        run_id = cursor.lastrowid
+        conn.commit()
+
+        try:
+            hotspots_count, opportunities_count = scraper.run_daily_collection()
+
+            # Aggregate run stats
+            cursor.execute(
+                """
+                SELECT
+                  SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS success_cnt,
+                  SUM(CASE WHEN status='empty' THEN 1 ELSE 0 END) AS empty_cnt,
+                  SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS error_cnt
+                FROM source_status
+                WHERE date(created_at) = date('now')
+                """
+            )
+            row = cursor.fetchone() or {}
+            sources_success = int(row.get("success_cnt") or 0)
+            sources_empty = int(row.get("empty_cnt") or 0)
+            sources_error = int(row.get("error_cnt") or 0)
+
+            # Date breakdown (content date = date(published_at) if available else date(created_at))
+            cursor.execute("DELETE FROM collect_run_date_breakdown WHERE run_id = ?", (run_id,))
+            cursor.execute(
+                """
+                INSERT INTO collect_run_date_breakdown (run_id, content_date, item_count)
+                SELECT ?,
+                       COALESCE(NULLIF(date(published_at), ''), date(created_at)) AS content_date,
+                       COUNT(*) AS cnt
+                FROM hotspots
+                WHERE date(created_at) = date('now')
+                GROUP BY COALESCE(NULLIF(date(published_at), ''), date(created_at))
+                """,
+                (run_id,),
+            )
+
+            finished_at = datetime.now()
+            cursor.execute(
+                """
+                UPDATE collect_runs
+                SET finished_at = ?,
+                    status = ?,
+                    hotspots_inserted = ?,
+                    opportunities_count = ?,
+                    sources_success = ?,
+                    sources_empty = ?,
+                    sources_error = ?
+                WHERE id = ?
+                """,
+                (
+                    finished_at.strftime("%Y-%m-%d %H:%M:%S"),
+                    "success",
+                    int(hotspots_count or 0),
+                    int(opportunities_count or 0),
+                    sources_success,
+                    sources_empty,
+                    sources_error,
+                    run_id,
+                ),
+            )
+            conn.commit()
+
+            json_response(
+                self,
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "run_id": run_id,
+                    "hotspots_count": hotspots_count,
+                    "opportunities_count": opportunities_count,
+                    "collected_at": finished_at.strftime("%Y-%m-%d %H:%M:%S"),
+                },
+            )
+        except Exception as exc:
+            finished_at = datetime.now()
+            cursor.execute(
+                """
+                UPDATE collect_runs
+                SET finished_at = ?, status = ?, notes = ?
+                WHERE id = ?
+                """,
+                (finished_at.strftime("%Y-%m-%d %H:%M:%S"), "error", str(exc), run_id),
+            )
+            conn.commit()
+            raise
+        finally:
+            conn.close()
+
+    def handle_summary(self, query: Dict[str, List[str]]) -> None:
+        hs_where, hs_params, range_meta = self._build_date_filter(query, "created_at")
+        opp_where, opp_params, _ = self._build_date_filter(query, "created_at")
+        note_where, note_params, _ = self._build_date_filter(query, "created_at")
+        conn = connect_db()
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT COUNT(*) AS cnt FROM hotspots WHERE {hs_where}", tuple(hs_params))
         hotspot_count = cursor.fetchone()["cnt"]
         cursor.execute(
-            "SELECT COUNT(*) AS cnt FROM opportunities WHERE date(created_at) = date(?)",
-            (date,),
+            f"SELECT COUNT(*) AS cnt FROM opportunities WHERE {opp_where}",
+            tuple(opp_params),
         )
         opportunity_count = cursor.fetchone()["cnt"]
-        cursor.execute("SELECT COUNT(*) AS cnt FROM notes WHERE date(created_at) = date(?)", (date,))
+        cursor.execute(f"SELECT COUNT(*) AS cnt FROM notes WHERE {note_where}", tuple(note_params))
         note_count = cursor.fetchone()["cnt"]
         conn.close()
+        payload: Dict[str, Any] = {
+            "ok": True,
+            "hotspot_count": hotspot_count,
+            "opportunity_count": opportunity_count,
+            "note_count": note_count,
+        }
+        payload.update(range_meta)
         json_response(
             self,
             HTTPStatus.OK,
-            {
-                "ok": True,
-                "date": date,
-                "hotspot_count": hotspot_count,
-                "opportunity_count": opportunity_count,
-                "note_count": note_count,
-            },
+            payload,
         )
 
     def handle_trend(self, query: Dict[str, List[str]]) -> None:
@@ -582,56 +1042,108 @@ class DashboardHandler(BaseHTTPRequestHandler):
         json_response(self, HTTPStatus.OK, {"ok": True, "latest_date": latest_date})
 
     def handle_hotspots(self, query: Dict[str, List[str]]) -> None:
-        date = self._query_date(query)
+        where_clause, where_params, range_meta = self._build_date_filter(query, "created_at")
         limit = int(query.get("limit", ["50"])[0])
+        fill_missing_raw = (query.get("fill_missing", [""])[0] or "").strip().lower()
+        fill_missing = fill_missing_raw in {"1", "true", "yes"}
+        try:
+            fill_missing_max_limit = max(
+                1, int(os.getenv("HOTSPOT_FILL_MISSING_MAX_LIMIT", "100"))
+            )
+        except ValueError:
+            fill_missing_max_limit = 100
+        if fill_missing and limit > fill_missing_max_limit:
+            fill_missing = False
         conn = connect_db()
         cursor = conn.cursor()
         cursor.execute(
-            """
+            f"""
             SELECT id, title, content, url, source, category, tags, ai_summary, title_zh,
                    innovation_score, commercial_score, tech_score,
                    investment_score, total_score, created_at
             FROM hotspots
-            WHERE date(created_at) = date(?)
+            WHERE {where_clause}
             ORDER BY total_score DESC, created_at DESC
             LIMIT ?
             """,
-            (date, limit),
+            (*where_params, limit),
         )
         rows = cursor.fetchall()
 
-        # 检查并生成缺失的AI摘要（每次最多生成3个，避免超时）
-        hotspots = []
+        hotspots = [serialize_hotspot(row) for row in rows]
         generated_count = 0
-        max_generate = 3  # 每次最多生成3个
 
-        for row in rows:
-            hotspot = serialize_hotspot(row)
-            # 如果没有AI摘要且未超过生成上限，生成一个
-            if not hotspot.get("ai_summary") and generated_count < max_generate:
+        if fill_missing:
+            try:
+                max_generate = max(1, min(20, int(os.getenv("HOTSPOT_FILL_MISSING_LIMIT", "3"))))
+            except ValueError:
+                max_generate = 3
+            for hotspot in hotspots:
                 content = hotspot.get("content", "")
                 title = hotspot.get("title", "")
-                if content and len(content) > 20:
-                    result = generate_ai_summary(content, title)
+                ai_summary_text = str(hotspot.get("ai_summary") or "")
+                needs_summary = (
+                    (not ai_summary_text)
+                    or ai_summary_text.startswith("API错误")
+                    or ai_summary_text.startswith("生成失败")
+                    or ("AI摘要服务暂时繁忙" in ai_summary_text)
+                )
+                needs_title_zh = not hotspot.get("title_zh")
+
+                if (needs_summary or needs_title_zh) and generated_count < max_generate:
+                    summary_text = ai_summary_text
+                    title_zh = hotspot.get("title_zh", "")
+                    summary_input = content if content and len(content) > 20 else title
+
+                    if needs_summary and summary_input:
+                        result = generate_ai_summary(summary_input, title)
+                        summary_text = result.get("summary", summary_text)
+                        title_zh = result.get("title_zh", title_zh)
+                    elif needs_title_zh:
+                        title_zh = _translate_title_to_chinese(title)
+                    if needs_summary and not summary_text:
+                        summary_text = _fallback_summary(summary_input, title)
+
                     try:
                         cursor.execute(
                             "UPDATE hotspots SET ai_summary = ?, title_zh = ? WHERE id = ?",
-                            (result["summary"], result["title_zh"], hotspot["id"])
+                            (summary_text, title_zh, hotspot["id"])
                         )
-                        hotspot["ai_summary"] = result["summary"]
-                        hotspot["title_zh"] = result["title_zh"]
+                        hotspot["ai_summary"] = summary_text
+                        hotspot["title_zh"] = title_zh
                         generated_count += 1
                     except sqlite3.OperationalError:
                         pass
-            hotspots.append(hotspot)
 
-        if generated_count > 0:
-            try:
-                conn.commit()
-            except sqlite3.OperationalError:
-                pass
+            if generated_count > 0:
+                try:
+                    conn.commit()
+                except sqlite3.OperationalError:
+                    pass
         conn.close()
-        json_response(self, HTTPStatus.OK, {"ok": True, "date": date, "hotspots": hotspots, "generated": generated_count})
+        payload: Dict[str, Any] = {"ok": True, "hotspots": hotspots, "generated": generated_count}
+        payload.update(range_meta)
+        json_response(self, HTTPStatus.OK, payload)
+
+    def handle_hotspot_source_groups(self, query: Dict[str, List[str]]) -> None:
+        where_clause, where_params, range_meta = self._build_date_filter(query, "created_at")
+        conn = connect_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT source, COUNT(*) AS cnt
+            FROM hotspots
+            WHERE {where_clause}
+            GROUP BY source
+            ORDER BY cnt DESC, source ASC
+            """,
+            tuple(where_params),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        grouped = [{"source": row["source"] or "", "count": row["cnt"]} for row in rows]
+        json_response(self, HTTPStatus.OK, {"ok": True, "sources": grouped, **range_meta})
 
     def handle_hotspot_detail(self, hotspot_id: str) -> None:
         conn = connect_db()
@@ -653,21 +1165,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
         json_response(self, HTTPStatus.OK, {"ok": True, "hotspot": serialize_hotspot(row)})
 
     def handle_opportunities(self, query: Dict[str, List[str]]) -> None:
-        date = self._query_date(query)
+        where_clause, where_params, range_meta = self._build_date_filter(query, "created_at")
         limit = int(query.get("limit", ["20"])[0])
         conn = connect_db()
         cursor = conn.cursor()
         cursor.execute(
-            """
+            f"""
             SELECT id, title, description, category, potential_score,
                    competition_level, resources_needed, timeline, pain_points,
                    blue_ocean_opportunity, monetization_potential, domains, priority, created_at
             FROM opportunities
-            WHERE date(created_at) = date(?)
+            WHERE {where_clause}
             ORDER BY potential_score DESC, created_at DESC
             LIMIT ?
             """,
-            (date, limit),
+            (*where_params, limit),
         )
         rows = cursor.fetchall()
         conn.close()
@@ -700,22 +1212,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
         json_response(
             self,
             HTTPStatus.OK,
-            {"ok": True, "date": date, "opportunities": opportunities},
+            {"ok": True, "opportunities": opportunities, **range_meta},
         )
 
     def handle_source_status(self, query: Dict[str, List[str]]) -> None:
-        date = self._query_date(query)
+        where_clause, where_params, range_meta = self._build_date_filter(query, "created_at")
         conn = connect_db()
         cursor = conn.cursor()
         try:
             cursor.execute(
-                """
+                f"""
                 SELECT source, source_type, status, item_count, error_message, created_at
                 FROM source_status
-                WHERE date(created_at) = date(?)
+                WHERE {where_clause}
                 ORDER BY created_at DESC, source ASC
                 """,
-                (date,),
+                tuple(where_params),
             )
             rows = cursor.fetchall()
         except sqlite3.OperationalError:
@@ -735,24 +1247,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 }
             )
 
-        json_response(self, HTTPStatus.OK, {"ok": True, "date": date, "source_status": statuses})
+        json_response(self, HTTPStatus.OK, {"ok": True, "source_status": statuses, **range_meta})
 
     def handle_notes(self, query: Dict[str, List[str]]) -> None:
-        date = self._query_date(query)
+        where_clause, where_params, range_meta = self._build_date_filter(query, "n.created_at")
         limit = int(query.get("limit", ["50"])[0])
         conn = connect_db()
         cursor = conn.cursor()
         cursor.execute(
-            """
+            f"""
             SELECT n.id, n.hotspot_id, n.content, n.tags, n.created_at,
                    h.title AS hotspot_title
             FROM notes n
             LEFT JOIN hotspots h ON n.hotspot_id = h.id
-            WHERE date(n.created_at) = date(?)
+            WHERE {where_clause}
             ORDER BY n.created_at DESC
             LIMIT ?
             """,
-            (date, limit),
+            (*where_params, limit),
         )
         rows = cursor.fetchall()
         conn.close()
@@ -769,7 +1281,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "created_at": row["created_at"],
                 }
             )
-        json_response(self, HTTPStatus.OK, {"ok": True, "date": date, "notes": notes})
+        json_response(self, HTTPStatus.OK, {"ok": True, "notes": notes, **range_meta})
 
     def handle_add_note(self) -> None:
         content_length = int(self.headers.get("Content-Length", "0"))
@@ -916,21 +1428,55 @@ class DashboardHandler(BaseHTTPRequestHandler):
         json_response(self, HTTPStatus.OK, {"ok": True, "summary": result["summary"], "title_zh": result["title_zh"]})
 
     def handle_regen_summaries(self) -> None:
-        """批量重新生成所有缺失摘要（后台同步执行）"""
+        """批量补全缺失摘要与中文标题（后台同步执行）"""
         conn = connect_db()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, title, content FROM hotspots
-            WHERE (ai_summary IS NULL OR ai_summary = '')
-            AND content IS NOT NULL AND length(content) > 20
+            SELECT id, title, content, ai_summary, title_zh FROM hotspots
+            WHERE (
+                ai_summary IS NULL
+                OR ai_summary = ''
+                OR ai_summary LIKE 'API错误:%'
+                OR ai_summary LIKE '生成失败:%'
+                OR ai_summary LIKE '%AI摘要服务暂时繁忙%'
+                OR title_zh IS NULL
+                OR title_zh = ''
+            )
+            AND (
+                (content IS NOT NULL AND length(content) > 20)
+                OR (title IS NOT NULL AND title != '')
+            )
+            ORDER BY created_at DESC
         """)
         rows = cursor.fetchall()
         updated = 0
         for row in rows:
-            result = generate_ai_summary(row["content"], row["title"])
+            summary_text = str(row["ai_summary"] or "").strip()
+            title_zh = str(row["title_zh"] or "").strip()
+            content = str(row["content"] or "")
+            title = str(row["title"] or "")
+            needs_summary = (
+                (not summary_text)
+                or summary_text.startswith("API错误")
+                or summary_text.startswith("生成失败")
+                or ("AI摘要服务暂时繁忙" in summary_text)
+            )
+            needs_title_zh = not title_zh
+
+            summary_input = content if len(content) > 20 else title
+            if needs_summary and summary_input:
+                result = generate_ai_summary(summary_input, title)
+                summary_text = result.get("summary", summary_text)
+                title_zh = result.get("title_zh", title_zh)
+            if needs_summary and not summary_text:
+                summary_text = _fallback_summary(summary_input, title)
+
+            if needs_title_zh and not title_zh:
+                title_zh = _translate_title_to_chinese(title)
+
             cursor.execute(
                 "UPDATE hotspots SET ai_summary = ?, title_zh = ? WHERE id = ?",
-                (result["summary"], result["title_zh"], row["id"])
+                (summary_text, title_zh, row["id"])
             )
             updated += 1
         conn.commit()
@@ -1042,7 +1588,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return
 
 
-def create_server(host: str = "127.0.0.1", port: int = 5001) -> ThreadingHTTPServer:
+def create_server(host: str = "127.0.0.1", port: int = 6003) -> ThreadingHTTPServer:
     return ThreadingHTTPServer((host, port), DashboardHandler)
 
 

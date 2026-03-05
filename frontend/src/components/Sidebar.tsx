@@ -9,10 +9,10 @@ interface SidebarProps {
 export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
   const navItems = [
     { id: 'overview', label: 'Overview', icon: BarChart2 },
-    { id: 'feed', label: 'Insight', icon: LayoutList },
+    { id: 'feed', label: 'News', icon: LayoutList },
     { id: 'discover', label: 'Opportunity', icon: Compass },
     { id: 'saved', label: 'Saved', icon: Bookmark },
-    { id: 'notes', label: 'Intelligence', icon: BookOpen },
+    { id: 'notes', label: 'Insight', icon: BookOpen },
     { id: 'sources', label: 'Sources', icon: Database },
     { id: 'log', label: 'Log', icon: FileClock },
     { id: 'settings', label: 'Settings', icon: Settings },

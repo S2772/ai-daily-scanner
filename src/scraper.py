@@ -9,34 +9,169 @@ import requests
 import sqlite3
 import json
 import time
+import re
 import feedparser
+import xml.etree.ElementTree as ET
+from collections import Counter
 from typing import List, Dict, Any
 import hashlib
 from html.parser import HTMLParser
 from .twitter_scraper import TwitterScraper
 
+AI_API_CONFIG = {
+    "base_url": os.getenv("AI_API_BASE_URL", "https://bobdong.cn/v1/chat/completions"),
+    "api_key": os.getenv("AI_API_KEY", "sk-pkTNOMFFkTCohLxN8Fswqhr5pCbPxypDHRy8hoATEFbIO2El"),
+    "model": os.getenv("AI_API_MODEL", "gpt-5.2-codex"),
+    "fallback_models": [
+        m.strip()
+        for m in os.getenv("AI_API_FALLBACK_MODELS", "gpt-5.3-codex,gpt-5.2,gpt-4.1").split(",")
+        if m.strip()
+    ],
+}
+
 
 class _StripTagsParser(HTMLParser):
-    """Strip HTML tags and extract plain text, skipping script/style content."""
+    """Strip HTML tags and extract plain text, skipping common UI/navigation blocks."""
+    _SKIP_TAGS = {
+        "script", "style", "noscript", "svg", "canvas", "iframe",
+        "nav", "header", "footer", "button", "input", "select",
+        "option", "textarea", "aside", "form",
+    }
+    _BLOCK_TAGS = {
+        "article", "section", "div", "p", "br", "li", "ul", "ol",
+        "h1", "h2", "h3", "h4", "h5", "h6", "blockquote",
+    }
+    _UI_ATTR_KEYWORDS = (
+        "nav", "menu", "header", "footer", "sidebar", "breadcrumb", "toolbar",
+        "share", "social", "author", "meta", "metadata", "byline", "avatar",
+        "subscribe", "comment", "reply", "related", "recommend", "toc",
+        "advert", "ads", "promo", "banner", "cookie", "modal", "popup",
+        "login", "signup", "register", "search", "btn", "button", "pager",
+    )
+
     def __init__(self):
         super().__init__()
-        self._skip = False
+        self._skip_stack = []
         self._parts = []
 
     def handle_starttag(self, tag, attrs):
-        if tag.lower() in ("script", "style"):
-            self._skip = True
+        tag_lower = (tag or "").lower()
+        parent_skip = self._skip_stack[-1] if self._skip_stack else False
+        skip = parent_skip or self._should_skip(tag_lower, attrs or [])
+        self._skip_stack.append(skip)
+
+        if not skip and tag_lower in self._BLOCK_TAGS:
+            self._parts.append("\n")
 
     def handle_endtag(self, tag):
-        if tag.lower() in ("script", "style"):
-            self._skip = False
+        tag_lower = (tag or "").lower()
+        skipping = self._skip_stack.pop() if self._skip_stack else False
+        if not skipping and tag_lower in self._BLOCK_TAGS:
+            self._parts.append("\n")
 
     def handle_data(self, data):
-        if not self._skip:
-            self._parts.append(data)
+        if self._skip_stack and self._skip_stack[-1]:
+            return
+        text = (data or "").strip()
+        if text:
+            self._parts.append(text)
 
     def get_text(self):
-        return " ".join(part.strip() for part in self._parts if part.strip())
+        text = " ".join(part.strip() for part in self._parts if part.strip())
+        return clean_extracted_text(text)
+
+    def _should_skip(self, tag: str, attrs: List[Any]) -> bool:
+        if tag in self._SKIP_TAGS:
+            return True
+        for key, value in attrs:
+            key_lower = (key or "").lower()
+            value_lower = str(value or "").lower()
+            if key_lower in {"class", "id", "role", "aria-label", "data-testid"}:
+                if any(token in value_lower for token in self._UI_ATTR_KEYWORDS):
+                    return True
+        return False
+
+
+_INLINE_UI_PATTERNS = [
+    r"\bOriginal\b",
+    r"\b\d{1,2}\s*Founder\b",
+    r"在小说阅读器中沉浸阅读",
+    r"内容[｜|]\s*[^ \n|｜]{1,20}\s*编辑[｜|]\s*[^ \n|｜]{1,20}",
+]
+
+_UI_LINE_KEYWORDS = (
+    "author", "editor", "by ", "share", "social", "follow", "subscribe",
+    "comment", "reply", "menu", "navigation", "breadcrumb", "login",
+    "signup", "register", "related", "recommend", "copyright",
+    "原创", "原文", "作者", "编辑", "来源", "转载", "分享", "关注",
+    "点赞", "评论", "订阅", "目录", "返回", "上一篇", "下一篇", "阅读原文",
+)
+
+
+def _looks_like_ui_line(line: str, short_line_counts: Counter) -> bool:
+    if not line:
+        return True
+    lower = line.lower()
+    if re.fullmatch(r"(original|原创|作者|编辑|来源|分享|点赞|评论|关注|订阅|目录|返回|展开|收起|阅读原文)", lower):
+        return True
+    if any(k in lower for k in _UI_LINE_KEYWORDS) and len(line) <= 60:
+        return True
+    if short_line_counts.get(line, 0) >= 2 and len(line) <= 24:
+        return True
+    if (line.count("|") + line.count("｜") + line.count("/") >= 2) and len(line) <= 60:
+        return True
+    return False
+
+
+def _dedupe_short_tokens(text: str) -> str:
+    tokens = text.split()
+    if len(tokens) < 2:
+        return text
+
+    deduped = []
+    prev_norm = ""
+    for token in tokens:
+        norm = re.sub(r"[^\w\u4e00-\u9fff]+", "", token.lower())
+        if re.search(r"[\u4e00-\u9fff]", norm):
+            norm = re.sub(r"[a-z0-9]{1,2}$", "", norm)
+        if norm and norm == prev_norm and len(norm) <= 16:
+            continue
+        deduped.append(token)
+        prev_norm = norm
+    return " ".join(deduped)
+
+
+def clean_extracted_text(text: str) -> str:
+    """Normalize extracted text and remove common UI/meta fragments."""
+    if not text:
+        return ""
+
+    content = text.replace("\r", "\n").replace("\u00a0", " ")
+    for pattern in _INLINE_UI_PATTERNS:
+        content = re.sub(pattern, " ", content, flags=re.IGNORECASE)
+    content = re.sub(r"[ \t\f\v]+", " ", content)
+    content = re.sub(r"\n{3,}", "\n\n", content)
+
+    raw_lines = [line.strip(" \t-•·|｜>") for line in content.split("\n")]
+    short_line_counts = Counter(
+        re.sub(r"\s+", " ", line).strip()
+        for line in raw_lines
+        if line and len(line) <= 24
+    )
+
+    cleaned_lines = []
+    for line in raw_lines:
+        line = re.sub(r"\s+", " ", line).strip()
+        line = _dedupe_short_tokens(line)
+        if not line:
+            continue
+        if _looks_like_ui_line(line, short_line_counts):
+            continue
+        if cleaned_lines and line == cleaned_lines[-1]:
+            continue
+        cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines).strip()
 
 
 def strip_html_tags(html: str) -> str:
@@ -49,8 +184,7 @@ def strip_html_tags(html: str) -> str:
         return parser.get_text()
     except Exception:
         # Fallback: crude tag removal
-        import re
-        return re.sub(r"<[^>]+>", " ", html).strip()
+        return clean_extracted_text(re.sub(r"<[^>]+>", " ", html))
 
 class AIScraper:
     def __init__(self, db_path: str = "data/ai_hotspots.db"):
@@ -214,6 +348,15 @@ class AIScraper:
             cursor.execute("SELECT priority FROM opportunities LIMIT 1")
         except sqlite3.OperationalError:
             cursor.execute("ALTER TABLE opportunities ADD COLUMN priority TEXT")
+        try:
+            cursor.execute("SELECT title_zh FROM hotspots LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute("ALTER TABLE hotspots ADD COLUMN title_zh TEXT")
+
+        try:
+            cursor.execute("SELECT published_at FROM hotspots LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute("ALTER TABLE hotspots ADD COLUMN published_at TIMESTAMP")
         
         # 创建用户笔记表
         cursor.execute('''
@@ -258,9 +401,9 @@ class AIScraper:
             }
             response = requests.get(jina_url, headers=headers, timeout=15)
             if response.status_code == 200 and response.text.strip():
-                content = response.text
+                content = clean_extracted_text(response.text)
                 # 检查是否返回了有效内容
-                if content and len(content) > 100:
+                if content and len(content) > 120:
                     print(f"  ✓ 通过Jina AI获取: {url}")
                     return content
         except Exception as e:
@@ -273,18 +416,73 @@ class AIScraper:
             }
             response = requests.get(url, headers=headers, timeout=10)
             response.raise_for_status()
-            return response.text
+            html = response.text or ""
+            if "<html" in html.lower() or "<body" in html.lower():
+                return strip_html_tags(html)
+            return clean_extracted_text(html)
         except Exception as e:
             print(f"Error fetching {url}: {e}")
             return ""
     
+    def _parse_wewe_atom(self, feed_url: str, content: bytes) -> List[Dict[str, Any]]:
+        """直接用 xml.etree 解析 WeWe RSS Atom feed，绕过 feedparser 的 HTML sanitizer"""
+        items = []
+        try:
+            root = ET.fromstring(content)
+            ns = {'atom': 'http://www.w3.org/2005/Atom'}
+            entries = root.findall('atom:entry', ns)
+            for entry in entries[:10]:
+                title_el = entry.find('atom:title', ns)
+                raw_title = title_el.text.strip() if title_el is not None and title_el.text else ""
+                link_el = entry.find('atom:link', ns)
+                url = link_el.get('href', '') if link_el is not None else ""
+                content_el = entry.find('atom:content', ns)
+                raw_html = content_el.text or "" if content_el is not None else ""
+                # 提取纯文本（先不限制长度，让 strip_html_tags 处理完整 HTML）
+                clean_text = strip_html_tags(raw_html) if raw_html else ""
+                # 限制最终文本长度（保留足够长度用于 AI 摘要生成）
+                if len(clean_text) > 5000:
+                    clean_text = clean_text[:5000]
+                
+                # 修复：如果 title 太长（> 200 字符），说明 WeWe RSS 把全文放到了 title 里
+                # 这种情况下，把 title 当成 content，然后提取前 100 字符作为 title
+                if len(raw_title) > 200:
+                    # title 太长，把它当成 content
+                    if not clean_text:  # 如果 content 为空，使用 title 作为 content
+                        clean_text = raw_title
+                    # 提取前 100 字符作为 title（去掉换行符）
+                    title = raw_title.replace('\n', ' ').replace('\r', '')[:100].strip()
+                    if len(raw_title) > 100:
+                        title += "..."
+                else:
+                    title = raw_title
+                
+                text_for_classify = title + " " + clean_text
+                item = {
+                    "id": self.generate_id(url + title),
+                    "title": title,
+                    "content": clean_text,
+                    "url": url,
+                    "source": feed_url,
+                    "category": self.classify_content(text_for_classify),
+                    "tags": json.dumps(self.extract_tags(text_for_classify)),
+                    # Atom <updated> or <published> (if present)
+                    "published_at": entry.get("updated") or entry.get("published") or "",
+                }
+                scores = self.calculate_scores_detailed(title, clean_text, item["category"])
+                item.update(scores)
+                items.append(item)
+        except ET.ParseError as e:
+            print(f"  XML解析失败 {feed_url}: {e}")
+        return items
+
     def parse_rss_feed_with_status(self, feed_url: str) -> Dict[str, Any]:
         """解析RSS订阅源并返回状态"""
         items = []
         error_message = ""
         try:
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                "User-Agent": "python-requests/2.31.0"
             }
             
             # 添加重试机制
@@ -301,34 +499,51 @@ class AIScraper:
                     print(f"尝试 {attempt + 1}/{max_retries} 失败，等待重试: {e}")
                     time.sleep(2 ** attempt)  # 指数退避
             
-            feed = feedparser.parse(response.content)
+            # WeWe RSS (localhost:4000) 用直接 XML 解析，避免 feedparser 破坏 HTML 内容
+            if "localhost:4000" in feed_url:
+                items = self._parse_wewe_atom(feed_url, response.content)
+            else:
+                feed = feedparser.parse(response.content)
 
-            if getattr(feed, "bozo", False):
-                print(f"Warning: RSS解析可能异常 {feed_url}")
+                if getattr(feed, "bozo", False):
+                    print(f"Warning: RSS解析可能异常 {feed_url}")
 
-            for entry in feed.entries[:10]:  # 只取前10条
-                raw_content = entry.get("summary", "") or entry.get("description", "")
-                content = strip_html_tags(raw_content)
-                item = {
-                    "id": self.generate_id(entry.get("link", "") + entry.get("title", "")),
-                    "title": entry.get("title", ""),
-                    "content": content,
-                    "url": entry.get("link", ""),
-                    "source": feed_url,
-                    "category": self.classify_content(entry.get("title", "") + content),
-                    "tags": json.dumps(self.extract_tags(entry.get("title", "") + content)),
-                }
-                
-                # 计算各项评分
-                scores = self.calculate_scores_detailed(item["title"], content, item["category"])
-                item.update(scores)
-                
-                items.append(item)
+                for entry in feed.entries[:10]:
+                    raw_content = entry.get("summary", "") or entry.get("description", "")
+                    content = strip_html_tags(raw_content)
+                    text_for_classify = entry.get("title", "") + " " + content
+
+                    published_at = ""
+                    if entry.get("published_parsed"):
+                        try:
+                            published_at = time.strftime("%Y-%m-%d %H:%M:%S", entry.published_parsed)
+                        except Exception:
+                            published_at = ""
+                    if not published_at and entry.get("updated_parsed"):
+                        try:
+                            published_at = time.strftime("%Y-%m-%d %H:%M:%S", entry.updated_parsed)
+                        except Exception:
+                            published_at = ""
+                    if not published_at:
+                        published_at = entry.get("published", "") or entry.get("updated", "") or ""
+
+                    item = {
+                        "id": self.generate_id(entry.get("link", "") + entry.get("title", "")),
+                        "title": entry.get("title", ""),
+                        "content": content,
+                        "url": entry.get("link", ""),
+                        "source": feed_url,
+                        "category": self.classify_content(text_for_classify),
+                        "tags": json.dumps(self.extract_tags(text_for_classify)),
+                        "published_at": published_at,
+                    }
+                    scores = self.calculate_scores_detailed(item["title"], content, item["category"])
+                    item.update(scores)
+                    items.append(item)
         except Exception as e:
             error_message = str(e)
             print(f"Error parsing RSS feed {feed_url}: {error_message}")
             
-            # 如果是DNS解析问题，提供更友好的错误信息
             if "NameResolutionError" in error_message or "Failed to resolve" in error_message:
                 error_message = f"DNS解析失败: {feed_url}。请检查网络连接或DNS设置。"
 
@@ -468,34 +683,146 @@ class AIScraper:
             "investment_score": min(investment_score, 10),
             "total_score": min(total_score, 10)
         }
+
+    def _summarize_fallback(self, title: str, content: str) -> str:
+        text = (content or title or "").strip()
+        if not text:
+            return ""
+        if len(text) > 220:
+            return f"{text[:220]}..."
+        return text
+
+    def _generate_ai_summary(self, title: str, content: str) -> str:
+        source_text = (content or title or "").strip()
+        if len(source_text) < 10:
+            return self._summarize_fallback(title, content)
+
+        models = []
+        if AI_API_CONFIG.get("model"):
+            models.append(str(AI_API_CONFIG["model"]))
+        for model in AI_API_CONFIG.get("fallback_models", []):
+            if model not in models:
+                models.append(model)
+        if not models:
+            models = ["gpt-5.2-codex"]
+
+        prompt = f"""请将下面热点内容总结成简体中文摘要（80-150字），只返回摘要正文，不要额外说明。
+
+标题：{title}
+内容：{source_text[:2500]}"""
+
+        headers = {
+            "Authorization": f"Bearer {AI_API_CONFIG['api_key']}",
+            "Content-Type": "application/json",
+        }
+        for model in models:
+            payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 400,
+                "temperature": 0.3,
+            }
+            try:
+                response = requests.post(
+                    AI_API_CONFIG["base_url"],
+                    headers=headers,
+                    json=payload,
+                    timeout=30,
+                )
+                if response.status_code != 200:
+                    continue
+                summary = (
+                    response.json()
+                    .get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                    .strip()
+                )
+                if summary:
+                    return summary[:600]
+            except Exception:
+                continue
+
+        return self._summarize_fallback(title, content)
+
+    def _resolve_scores(self, item: Dict[str, Any]) -> Dict[str, int]:
+        score_keys = [
+            "innovation_score",
+            "commercial_score",
+            "tech_score",
+            "investment_score",
+            "total_score",
+        ]
+        if all(key in item for key in score_keys):
+            try:
+                return {
+                    "innovation_score": max(0, min(10, int(item.get("innovation_score", 0)))),
+                    "commercial_score": max(0, min(10, int(item.get("commercial_score", 0)))),
+                    "tech_score": max(0, min(10, int(item.get("tech_score", 0)))),
+                    "investment_score": max(0, min(10, int(item.get("investment_score", 0)))),
+                    "total_score": max(0, min(10, int(item.get("total_score", 0)))),
+                }
+            except (TypeError, ValueError):
+                pass
+
+        return self.calculate_scores_detailed(
+            item.get("title", ""),
+            item.get("content", ""),
+            item.get("category", "市场机会"),
+        )
     
     def save_hotspot(self, item: Dict[str, Any]):
         """保存热点信息到数据库"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # 计算评分
-        scores = self.calculate_scores(item)
+        # 优先使用抓取阶段已计算的详细评分，避免被旧逻辑覆盖
+        scores = self._resolve_scores(item)
+        ai_summary = str(item.get("ai_summary") or "").strip()
+        if not ai_summary:
+            ai_summary = self._generate_ai_summary(item.get("title", ""), item.get("content", ""))
+        title_zh = str(item.get("title_zh") or item.get("title") or "").strip()
         
-        cursor.execute('''
-        INSERT OR REPLACE INTO hotspots 
-        (id, title, content, url, source, category, tags, 
-         innovation_score, commercial_score, tech_score, investment_score, total_score)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            item["id"],
-            item["title"][:200],  # 限制标题长度
-            item["content"][:1000] if item.get("content") else "",  # 限制内容长度
-            item["url"],
-            item["source"],
-            item["category"],
-            item["tags"],
-            scores["innovation_score"],
-            scores["commercial_score"],
-            scores["tech_score"],
-            scores["investment_score"],
-            scores["total_score"]
-        ))
+        published_at = item.get("published_at") or item.get("published") or item.get("updated")
+
+        # Soft-dedupe: if (url, source) already exists, reuse its id to avoid duplicating the same item
+        url = item.get("url") or ""
+        source = item.get("source") or ""
+        if url and source:
+            cursor.execute(
+                "SELECT id FROM hotspots WHERE url = ? AND source = ? LIMIT 1",
+                (url, source),
+            )
+            row = cursor.fetchone()
+            if row and row[0]:
+                item["id"] = row[0]
+
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO hotspots
+            (id, title, content, url, source, category, tags, ai_summary, title_zh,
+             innovation_score, commercial_score, tech_score, investment_score, total_score,
+             published_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item["id"],
+                item["title"][:200],  # 限制标题长度
+                item["content"][:1000] if item.get("content") else "",  # 限制内容长度
+                url,
+                source,
+                item["category"],
+                item["tags"],
+                ai_summary,
+                title_zh,
+                scores["innovation_score"],
+                scores["commercial_score"],
+                scores["tech_score"],
+                scores["investment_score"],
+                scores["total_score"],
+                published_at,
+            ),
+        )
         
         conn.commit()
         conn.close()
@@ -666,6 +993,21 @@ class AIScraper:
         for item in all_items:
             if "id" in item and not item["id"].startswith("twitter_"):
                 self.save_hotspot(item)
+
+        # 将今天入库的 created_at 校准为内容发布时间（published_at），避免“重复旧内容但记到今天”
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE hotspots
+            SET created_at = published_at
+            WHERE date(created_at) = date('now')
+              AND published_at IS NOT NULL
+              AND TRIM(COALESCE(published_at, '')) <> ''
+            """
+        )
+        conn.commit()
+        conn.close()
 
         # 识别机会
         opportunities = self.identify_opportunities()

@@ -249,7 +249,7 @@ function renderHeatmap(trend) {
 
 async function loadHotspots() {
   try {
-    const response = await fetch(`/api/hotspots?date=${currentDate}&limit=100`);
+    const response = await fetch(`/api/hotspots?date=${currentDate}&limit=100&fill_missing=1`);
     const data = await response.json();
     allHotspots = data.hotspots || [];
     renderTagFilters();

@@ -1,18 +1,105 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { NewsItem } from '../types';
-import { ExternalLink, Sparkles, Save, X, Maximize2, CheckCircle2, FileText } from 'lucide-react';
+import { ExternalLink, Sparkles, Save, ArrowLeft, CheckCircle2, FileText, Lightbulb, ArrowRight } from 'lucide-react';
 import { addNote } from '../api';
+import { cardUi, controlUi } from './designSystem';
 
 interface NewsDetailProps {
   item: NewsItem;
   onBack: () => void;
+  allItems?: NewsItem[];
+  onSelectItem?: (item: NewsItem) => void;
 }
 
-export function NewsDetail({ item, onBack }: NewsDetailProps) {
+interface RecommendationItem {
+  item: NewsItem;
+  reason: string;
+}
+
+function normalizeTopicName(news: NewsItem): string {
+  const topic = (news.sourceType || '').trim();
+  if (!topic || topic === 'General') return '';
+  return topic;
+}
+
+function tokenize(text: string): string[] {
+  const matches = text.toLowerCase().match(/[\u4e00-\u9fa5a-z0-9]+/g) || [];
+  return matches.filter(token => token.length > 1);
+}
+
+function cosineSimilarity(textA: string, textB: string): number {
+  const tokensA = tokenize(textA);
+  const tokensB = tokenize(textB);
+  if (tokensA.length === 0 || tokensB.length === 0) return 0;
+
+  const freqA = new Map<string, number>();
+  const freqB = new Map<string, number>();
+  for (const token of tokensA) freqA.set(token, (freqA.get(token) || 0) + 1);
+  for (const token of tokensB) freqB.set(token, (freqB.get(token) || 0) + 1);
+
+  let dot = 0;
+  let magA = 0;
+  let magB = 0;
+  for (const value of freqA.values()) magA += value * value;
+  for (const value of freqB.values()) magB += value * value;
+  for (const [token, value] of freqA.entries()) {
+    dot += value * (freqB.get(token) || 0);
+  }
+  if (magA === 0 || magB === 0) return 0;
+  return dot / (Math.sqrt(magA) * Math.sqrt(magB));
+}
+
+export function NewsDetail({ item, onBack, allItems = [], onSelectItem }: NewsDetailProps) {
   const [annotation, setAnnotation] = useState(item.annotations || '');
   const [isSaving, setIsSaving] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [showFullArticle, setShowFullArticle] = useState(false);
+  const aiSummary = (item.ai_summary || '').trim();
+  const originalContent = (item.content || '').trim();
+  const articlePreview = originalContent.slice(0, 500);
+  const hasLongArticle = originalContent.length > 500;
+
+  useEffect(() => {
+    setAnnotation(item.annotations || '');
+    setShowFullArticle(false);
+  }, [item.id, item.annotations]);
+
+  const recommendations = useMemo<RecommendationItem[]>(() => {
+    const candidates = allItems.filter(candidate => candidate.id !== item.id);
+    if (candidates.length === 0) return [];
+
+    const currentTopic = normalizeTopicName(item);
+    const baseText = `${item.title} ${item.summary} ${item.content}`;
+    const scored = candidates.map((candidate) => {
+      const targetText = `${candidate.title} ${candidate.summary} ${candidate.content}`;
+      const similarity = cosineSimilarity(baseText, targetText);
+      const sameTopic = currentTopic && normalizeTopicName(candidate) === currentTopic;
+      return { candidate, similarity, sameTopic: Boolean(sameTopic) };
+    });
+
+    const sameTopic = scored
+      .filter(row => row.sameTopic)
+      .sort((a, b) => b.similarity - a.similarity || b.candidate.score - a.candidate.score);
+    const similar = scored
+      .filter(row => !row.sameTopic)
+      .sort((a, b) => b.similarity - a.similarity || b.candidate.score - a.candidate.score);
+
+    const merged = [...sameTopic, ...similar].slice(0, Math.min(2, scored.length));
+    return merged.map((row) => ({
+      item: row.candidate,
+      reason: row.sameTopic
+        ? `Same topic: ${currentTopic}`
+        : 'Related by content similarity',
+    }));
+  }, [item, allItems]);
+
+  const handleOpenRecommendation = (nextItem: NewsItem) => {
+    if (onSelectItem) {
+      onSelectItem(nextItem);
+      return;
+    }
+    window.open(nextItem.url, '_blank', 'noopener,noreferrer');
+  };
 
   const handleSave = async () => {
     if (!annotation.trim()) return;
@@ -28,48 +115,6 @@ export function NewsDetail({ item, onBack }: NewsDetailProps) {
     setIsSaving(false);
   };
 
-  if (showFullArticle) {
-    return (
-      <div className="h-full flex flex-col bg-white rounded-lg overflow-hidden">
-        <div className="flex items-center justify-between p-4 border-b border-[#EAEAEA] shrink-0 bg-white">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setShowFullArticle(false)}
-              className="p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-            <span className="text-sm font-semibold text-gray-900 truncate max-w-[300px]">{item.title}</span>
-          </div>
-          <a
-            href={item.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 text-xs font-medium text-purple-600 hover:text-purple-700 transition-colors bg-purple-50 px-3 py-1.5 rounded-md"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            Open in Browser
-          </a>
-        </div>
-        <div className="flex-1 overflow-y-auto bg-gray-50 p-8">
-          <div className="max-w-3xl mx-auto bg-white p-10 rounded-xl shadow-sm border border-gray-100">
-            <h1 className="text-3xl font-bold text-gray-900 mb-4 leading-tight">{item.title}</h1>
-            <div className="flex items-center gap-3 text-sm text-gray-500 mb-8 pb-8 border-b border-gray-100">
-              <span className="font-medium text-gray-700">{item.source}</span>
-              <span>•</span>
-              <span>{new Date(item.timestamp).toLocaleString()}</span>
-            </div>
-            <div className="prose prose-gray max-w-none">
-              <p className="text-gray-800 text-base leading-relaxed whitespace-pre-line">
-                {item.content}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="h-full flex flex-col bg-white rounded-lg overflow-hidden">
       <div className="flex items-center justify-between p-4 border-b border-[#EAEAEA] shrink-0">
@@ -78,21 +123,23 @@ export function NewsDetail({ item, onBack }: NewsDetailProps) {
             onClick={onBack}
             className="p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"
           >
-            <X className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4" />
           </button>
           <span className="text-sm font-semibold text-gray-900">Article Detail</span>
         </div>
-        <button
-          onClick={() => setShowFullArticle(true)}
-          className="flex items-center gap-1.5 text-xs font-medium text-purple-600 hover:text-purple-700 transition-colors bg-purple-50 px-3 py-1.5 rounded-md"
+        <a
+          href={item.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={controlUi.purpleButton}
         >
-          <Maximize2 className="w-3.5 h-3.5" />
-          Read Full Article
-        </button>
+          <ExternalLink className="h-3.5 w-3.5" />
+          Open in Browser
+        </a>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-3xl mx-auto space-y-6">
+        <div className="mx-auto max-w-3xl space-y-6">
           <div className="space-y-3">
             <div className="flex flex-wrap gap-1.5">
               {item.tags.map(tag => (
@@ -122,47 +169,78 @@ export function NewsDetail({ item, onBack }: NewsDetailProps) {
             </div>
           </div>
 
-          {item.summary && (
-            <div className="bg-gradient-to-br from-purple-50 to-white rounded-xl p-5 border border-purple-100/50 shadow-sm">
+          {aiSummary && (
+            <div className={`${cardUi.base} bg-gradient-to-br from-purple-50 to-white border-purple-100/80 shadow-sm`}>
               <div className="flex items-center gap-1.5 mb-3 text-sm font-semibold text-purple-900">
                 <Sparkles className="w-4 h-4 text-purple-600" />
                 AI Summary
               </div>
               <p className="text-gray-700 text-sm leading-relaxed">
-                {item.summary}
+                {aiSummary}
               </p>
             </div>
           )}
 
-          <div className="prose prose-sm prose-gray max-w-none">
-            <p className="text-gray-800 text-sm leading-loose whitespace-pre-line line-clamp-[10]">
-              {item.content}
+          <div className={cardUi.base}>
+            <div className="mb-3 text-sm font-semibold text-gray-900">Original Content</div>
+            <p className="text-gray-700 text-sm leading-loose whitespace-pre-line">
+              {originalContent
+                ? showFullArticle || !hasLongArticle
+                  ? originalContent
+                  : `${articlePreview}...`
+                : 'No original text available.'}
             </p>
-            <button
-              onClick={() => setShowFullArticle(true)}
-              className="text-purple-600 text-sm font-medium hover:text-purple-700 mt-2"
-            >
-              Continue reading...
-            </button>
+            {hasLongArticle && (
+              <div className="mt-4">
+                <button onClick={() => setShowFullArticle((prev) => !prev)} className={controlUi.purpleButton}>
+                  {showFullArticle ? 'Show Less' : 'Read Full Article'}
+                </button>
+              </div>
+            )}
           </div>
 
-          <div className="pt-8 border-t border-[#EAEAEA]">
+          {recommendations.length > 0 && (
+            <div className="bg-gradient-to-br from-amber-50 to-white rounded-xl p-5 border border-amber-100/80 shadow-sm">
+              <div className="flex items-center gap-1.5 mb-2 text-sm font-semibold text-amber-900">
+                <Lightbulb className="w-4 h-4 text-amber-600" />
+                Recommendations
+              </div>
+              <div className="space-y-3">
+                {recommendations.map((recommendation) => (
+                  <button
+                    key={recommendation.item.id}
+                    onClick={() => handleOpenRecommendation(recommendation.item)}
+                    className="w-full text-left rounded-lg border border-amber-200 bg-white px-4 py-3 hover:border-purple-300 hover:bg-purple-50/40 transition-colors"
+                  >
+                    <div className="text-[11px] text-amber-800 mb-1">{recommendation.reason}</div>
+                    <div className="text-sm font-semibold text-gray-900 line-clamp-2">{recommendation.item.title}</div>
+                    <div className="mt-1 text-xs text-gray-500">{recommendation.item.source} · {recommendation.item.sourceType}</div>
+                    <div className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-purple-700">
+                      Open Recommended News <ArrowRight className="w-3.5 h-3.5" />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="border-t border-[#EAEAEA] pt-8">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
                 <FileText className="w-5 h-5 text-emerald-600" />
-                Intelligence Notes
+                Insight Notes
               </h3>
               <button
                 onClick={handleSave}
                 disabled={isSaving || !annotation.trim()}
-                className="flex items-center gap-1.5 text-xs bg-gray-900 text-white px-4 py-2 rounded-md hover:bg-gray-800 transition-colors shadow-sm disabled:opacity-50"
+                className={controlUi.darkButton}
               >
                 {isSaving ? (
                   <span className="flex items-center gap-1.5"><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Saving...</span>
                 ) : isSaved ? (
                   <span className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" /> Saved</span>
                 ) : (
-                  <span className="flex items-center gap-1.5"><Save className="w-3.5 h-3.5" /> Save to Intelligence</span>
+                  <span className="flex items-center gap-1.5"><Save className="w-3.5 h-3.5" /> Save to Insight</span>
                 )}
               </button>
             </div>
@@ -173,7 +251,7 @@ export function NewsDetail({ item, onBack }: NewsDetailProps) {
               className="w-full h-32 p-4 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 resize-none transition-all"
             />
             <p className="text-xs text-gray-500 mt-2">
-              Notes saved here will appear in your Intelligence list, linked to this News item.
+              Notes saved here will appear in your Insight list, linked to this News item.
             </p>
           </div>
         </div>

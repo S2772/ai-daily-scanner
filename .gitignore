@@ -9,3 +9,8 @@ server.log
 .DS_Store
 frontend/node_modules/
 frontend/dist/
+__pycache__/
+*.pyc
+*.db-wal
+*.db-shm
+.webapp.pid

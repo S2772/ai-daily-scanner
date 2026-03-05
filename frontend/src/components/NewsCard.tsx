@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { NewsItem } from '../types';
-import { Star, ArrowRight, Twitter, MessageCircle, Globe, Mic, Newspaper, Github, FileText, CheckCircle2, Bookmark, MoreHorizontal } from 'lucide-react';
+import { Star, ArrowRight, Twitter, MessageCircle, Globe, Mic, Newspaper, Github, FileText, ExternalLink } from 'lucide-react';
+import { getTopicTagClass } from '../topicColors';
+import { cardUi } from './designSystem';
 
 interface NewsCardProps {
   key?: React.Key;
@@ -18,108 +20,88 @@ const getSourceIcon = (platform: string) => {
     case 'Podcast': return <Mic className="w-3.5 h-3.5" />;
     case 'News Portal': return <Newspaper className="w-3.5 h-3.5" />;
     case 'Github': return <Github className="w-3.5 h-3.5" />;
+    case 'Social': return <Twitter className="w-3.5 h-3.5" />;
+    case 'News Media': return <Newspaper className="w-3.5 h-3.5" />;
+    case 'Official / Blogs': return <Globe className="w-3.5 h-3.5" />;
+    case 'Audio / Video': return <Mic className="w-3.5 h-3.5" />;
+    case 'Developer': return <Github className="w-3.5 h-3.5" />;
     default: return <FileText className="w-3.5 h-3.5" />;
   }
 };
 
 export function NewsCard({ item, onClick, isSelected, isCompact }: NewsCardProps) {
   const [isRead, setIsRead] = useState(false);
-  const [isSaved, setIsSaved] = useState(false);
+  const primaryTopic = (item.sourceType || '').trim() && item.sourceType !== 'General'
+    ? item.sourceType
+    : '';
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return `${date.getMonth() + 1}月${date.getDate()}日`;
   };
 
-  const handleActionClick = (e: React.MouseEvent, action: () => void) => {
-    e.stopPropagation();
-    action();
-  };
-
   return (
-    <div 
+    <div
       onClick={() => {
         setIsRead(true);
         onClick(item);
       }}
-      className={`group relative border rounded-xl p-4 transition-all cursor-pointer flex flex-col gap-2 w-full ${
-        isSelected 
-          ? 'bg-purple-50/50 border-purple-200 shadow-sm' 
-          : 'bg-white border-[#EAEAEA] hover:border-purple-500/40 hover:shadow-sm'
-      } ${isRead && !isSelected ? 'opacity-75' : ''}`}
+      className={`group relative flex w-full cursor-pointer flex-col gap-4 ${cardUi.interactive} ${
+        isSelected ? cardUi.selected : ''
+      } ${isRead && !isSelected ? 'opacity-80' : ''} ${isCompact ? 'p-4' : ''}`}
     >
-      {/* Hover Actions */}
-      <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 backdrop-blur-sm px-1.5 py-1 rounded-md border border-gray-100 shadow-sm z-10">
-        <button 
-          onClick={(e) => handleActionClick(e, () => setIsRead(!isRead))}
-          className={`p-1 rounded hover:bg-gray-100 transition-colors ${isRead ? 'text-purple-600' : 'text-gray-400'}`}
-          title={isRead ? "Mark as unread" : "Mark as read"}
-        >
-          <CheckCircle2 className="w-3.5 h-3.5" />
-        </button>
-        <button 
-          onClick={(e) => handleActionClick(e, () => setIsSaved(!isSaved))}
-          className={`p-1 rounded hover:bg-gray-100 transition-colors ${isSaved ? 'text-amber-500' : 'text-gray-400'}`}
-          title={isSaved ? "Remove from saved" : "Save for later"}
-        >
-          <Bookmark className={`w-3.5 h-3.5 ${isSaved ? 'fill-current' : ''}`} />
-        </button>
-        <button 
-          onClick={(e) => handleActionClick(e, () => {})}
-          className="p-1 rounded hover:bg-gray-100 transition-colors text-gray-400"
-          title="More options"
-        >
-          <MoreHorizontal className="w-3.5 h-3.5" />
-        </button>
-      </div>
-
       <div className="flex justify-between items-start">
-        <div className="flex items-center gap-1.5 text-[11px] text-gray-500 font-medium">
-          <div className={`flex items-center justify-center w-5 h-5 rounded-full ${isSelected ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-500'}`}>
+        <div className="flex flex-wrap items-center gap-2 pr-4 text-xs font-medium text-gray-500">
+          <div className={`flex h-6 w-6 items-center justify-center rounded-full ${isSelected ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-500'}`}>
             {getSourceIcon(item.sourcePlatform)}
           </div>
           <span className="text-gray-700">{item.sourcePlatform}</span>
           <span className="opacity-40">-</span>
-          <span>{item.sourceType}</span>
+          <span className="max-w-[220px] truncate">{item.source}</span>
           <span className="opacity-40">-</span>
           <span>{formatDate(item.timestamp)}</span>
         </div>
         {!isCompact && (
-          <div className="flex items-center gap-1 bg-purple-50 text-purple-700 px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ml-2 group-hover:opacity-0 transition-opacity">
-            <Star className="w-3 h-3 fill-current" />
+          <div className="ml-2 flex shrink-0 items-center gap-1 rounded-md border border-purple-100 bg-purple-50 px-2 py-1 text-[11px] font-semibold text-purple-700">
+            <Star className="h-3.5 w-3.5 fill-current" />
             {item.score.toFixed(1)}
           </div>
         )}
       </div>
 
-      <h3 className={`font-semibold leading-snug transition-colors pr-8 ${
+      {!isCompact && primaryTopic && (
+        <div className="flex flex-wrap gap-1.5">
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${getTopicTagClass(primaryTopic)}`}>
+            {primaryTopic}
+          </span>
+        </div>
+      )}
+
+      <h3 className={`pr-2 font-semibold leading-snug transition-colors ${
         isSelected ? 'text-purple-900' : 'text-gray-900 group-hover:text-purple-700'
-      } ${isCompact ? 'text-sm' : 'text-base'}`}>
+      } ${isCompact ? 'text-sm' : 'text-lg'}`}>
         {item.title}
       </h3>
 
-      <p className={`text-gray-600 line-clamp-2 leading-relaxed ${isCompact ? 'text-xs' : 'text-sm'}`}>
+      <p className={`text-gray-600 ${isCompact ? 'text-xs leading-relaxed' : 'text-sm leading-relaxed'}`}>
         {item.summary}
       </p>
 
       {!isCompact && (
-        <div className="flex items-center justify-between mt-2">
-          <div className="flex flex-wrap gap-1.5">
-            {item.tags.map(tag => (
-              <span 
-                key={tag.id} 
-                className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-                  tag.type === 'ai' 
-                    ? 'bg-purple-50 text-purple-700 border border-purple-100' 
-                    : 'bg-gray-50 text-gray-600 border border-gray-100'
-                }`}
-              >
-                {tag.name}
-              </span>
-            ))}
-          </div>
-          <div className="text-xs font-medium text-purple-600 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            Read More <ArrowRight className="w-3.5 h-3.5" />
+        <div className="mt-1 flex items-center justify-between">
+          <a
+            href={item.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex max-w-[72%] items-center gap-1 rounded px-1.5 py-1 text-xs text-indigo-600 transition-colors hover:bg-indigo-50 hover:text-indigo-700 hover:underline"
+            title={item.url}
+          >
+            <ExternalLink className="h-3 w-3 shrink-0" />
+            {item.url}
+          </a>
+          <div className="flex items-center gap-1 text-xs font-medium text-purple-600 opacity-0 transition-opacity group-hover:opacity-100">
+            Read More <ArrowRight className="h-3.5 w-3.5" />
           </div>
         </div>
       )}

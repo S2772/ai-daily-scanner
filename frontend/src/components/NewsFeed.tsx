@@ -1,22 +1,62 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { NewsCard } from './NewsCard';
 import { NewsDetail } from './NewsDetail';
 import { NewsItem } from '../types';
 import { Search, RefreshCw } from 'lucide-react';
-import { fetchHotspots, fetchLatestDate, Hotspot } from '../api';
+import { DateScopeDropdown } from './DateScopeDropdown';
+import { PaginationControls } from './PaginationControls';
+import { DataStatusPanel } from './DataStatusPanel';
+import { fetchHotspots, fetchSourceStatus, DateFilter, Hotspot } from '../api';
+import { createNoDataHint, createRequestErrorHint, DataStatusHint } from '../dataStatus';
+import { inferSourceGroup } from '../sourceGrouping';
+import { controlUi, pageUi } from './designSystem';
 
 function hotspotToNewsItem(h: Hotspot): NewsItem {
+  const titleZh = (h.title_zh || '').trim();
+  const titleFallbackPlaceholder = titleZh === '外文标题（请查看原文）';
+  const displayTitle = titleZh && !titleFallbackPlaceholder ? titleZh : h.title;
+  const sourceGroup = inferSourceGroup(h.source);
+  const sourceTopic = (h.category || '').trim();
+
+  const rawContent = (h.content || '').trim();
+  const rawSummary = (h.ai_summary || '').trim();
+  const contentLooksBroken = /the media could not be played|temporarily unavailable|access denied|unsupported browser/i.test(rawContent);
+  let displaySummary = rawSummary;
+  if (!displaySummary || displaySummary.includes('AI摘要服务暂时繁忙') || displaySummary.includes('内容太短，无法生成摘要')) {
+    displaySummary = rawContent ? rawContent.slice(0, 240) : '';
+  }
+  if (contentLooksBroken) {
+    displaySummary = '该条内容抓取失败（源站返回错误文案），请稍后重试抓取或检查数据源配置。';
+  }
+
+  const tagSeed: Array<{ name: string; type: 'ai' | 'manual' }> = [];
+  if (sourceTopic) {
+    tagSeed.push({ name: sourceTopic, type: 'manual' });
+  }
+  for (const rawTag of h.tags || []) {
+    const name = (rawTag || '').trim();
+    if (name) tagSeed.push({ name, type: 'ai' });
+  }
+  const dedupedTags = Array.from(
+    tagSeed.reduce((map, tag) => {
+      if (!map.has(tag.name)) map.set(tag.name, tag);
+      return map;
+    }, new Map<string, { name: string; type: 'ai' | 'manual' }>())
+      .values(),
+  );
+
   return {
     id: h.id,
-    title: h.title_zh || h.title,
+    title: displayTitle,
     source: h.source,
-    sourcePlatform: h.category || h.source,
-    sourceType: h.category || '新闻类',
+    sourcePlatform: sourceGroup,
+    sourceType: sourceTopic || 'General',
     score: h.total_score || 0,
-    summary: h.ai_summary || h.content?.slice(0, 200) || '',
+    summary: displaySummary,
+    ai_summary: h.ai_summary,
     content: h.content,
     url: h.url,
-    tags: (h.tags || []).map((t, i) => ({ id: `${h.id}-t${i}`, name: t, type: 'ai' as const })),
+    tags: dedupedTags.map((t, i) => ({ id: `${h.id}-t${i}`, name: t.name, type: t.type })),
     timestamp: h.created_at,
   };
 }
@@ -27,25 +67,43 @@ interface NewsFeedProps {
 }
 
 export function NewsFeed({ selectedHotspotId, onClearSelection }: NewsFeedProps) {
+  const now = new Date();
+  const currentDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const [selectedItem, setSelectedItem] = useState<NewsItem | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSource, setActiveSource] = useState('All');
+  const [activeTopic, setActiveTopic] = useState('All');
   const [allItems, setAllItems] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [date, setDate] = useState('');
-  const [categories, setCategories] = useState<string[]>(['All']);
+  const [timeRange, setTimeRange] = useState('Today');
+  const [dateFilter, setDateFilter] = useState<DateFilter>({ date: currentDate });
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [emptyStatus, setEmptyStatus] = useState<DataStatusHint | null>(null);
 
-  useEffect(() => {
-    fetchLatestDate().then(d => {
-      setDate(d);
-      return fetchHotspots(d, 100);
-    }).then(({ hotspots }) => {
+  const loadHotspots = async (filter: DateFilter) => {
+    setLoading(true);
+    setEmptyStatus(null);
+    try {
+      const { hotspots } = await fetchHotspots(filter, 200, false);
       const items = hotspots.map(hotspotToNewsItem);
       setAllItems(items);
-      const cats = Array.from(new Set(hotspots.map(h => h.category).filter(Boolean)));
-      setCategories(['All', ...cats]);
+      if (hotspots.length === 0) {
+        const statuses = await fetchSourceStatus(filter);
+        setEmptyStatus(createNoDataHint(statuses));
+      }
+    } catch (error) {
+      setAllItems([]);
+      setActiveSource('All');
+      setActiveTopic('All');
+      setEmptyStatus(createRequestErrorHint(error, 'News 数据加载失败'));
+    } finally {
       setLoading(false);
-    }).catch(() => setLoading(false));
+    }
+  };
+
+  useEffect(() => {
+    loadHotspots(dateFilter);
   }, []);
 
   // Auto-select item when selectedHotspotId is provided
@@ -60,80 +118,167 @@ export function NewsFeed({ selectedHotspotId, onClearSelection }: NewsFeedProps)
   }, [selectedHotspotId, allItems]);
 
   const handleRefresh = () => {
-    if (!date) return;
-    setLoading(true);
-    fetchHotspots(date, 100).then(({ hotspots }) => {
-      setAllItems(hotspots.map(hotspotToNewsItem));
-      setLoading(false);
-    }).catch(() => setLoading(false));
+    loadHotspots(dateFilter);
   };
+
+  const sourceFilters = useMemo(() => {
+    const grouped = new Map<string, number>();
+    for (const item of allItems) {
+      grouped.set(item.sourcePlatform, (grouped.get(item.sourcePlatform) || 0) + 1);
+    }
+    return Array.from(grouped.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => ({ name, count }));
+  }, [allItems]);
+
+  const topicFilters = useMemo(() => {
+    const grouped = new Map<string, number>();
+    for (const item of allItems) {
+      const name = (item.sourceType || '').trim();
+      if (!name || name === 'General') continue;
+      grouped.set(name, (grouped.get(name) || 0) + 1);
+    }
+    return Array.from(grouped.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => ({ name, count }));
+  }, [allItems]);
+
+  useEffect(() => {
+    if (activeSource !== 'All' && !sourceFilters.some(filter => filter.name === activeSource)) {
+      setActiveSource('All');
+    }
+  }, [sourceFilters, activeSource]);
+
+  useEffect(() => {
+    if (activeTopic !== 'All' && !topicFilters.some(filter => filter.name === activeTopic)) {
+      setActiveTopic('All');
+    }
+  }, [topicFilters, activeTopic]);
 
   const filteredNews = allItems.filter(item => {
     const matchesSearch = item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.tags.some(tag => tag.name.toLowerCase().includes(searchQuery.toLowerCase()));
     const matchesSource = activeSource === 'All' || item.sourcePlatform === activeSource;
-    return matchesSearch && matchesSource;
+    const matchesTopic = activeTopic === 'All' || item.sourceType === activeTopic;
+    return matchesSearch && matchesSource && matchesTopic;
   });
+  const totalPages = Math.max(1, Math.ceil(filteredNews.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStart = (safeCurrentPage - 1) * pageSize;
+  const pageNews = filteredNews.slice(pageStart, pageStart + pageSize);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, activeSource, activeTopic, pageSize, allItems]);
 
   return (
     <div className="h-full relative overflow-hidden">
       {selectedItem ? (
-        <div className="h-full w-full animate-in fade-in duration-300">
-          <NewsDetail item={selectedItem} onBack={() => setSelectedItem(null)} />
-        </div>
+        <NewsDetail
+          item={selectedItem}
+          onBack={() => setSelectedItem(null)}
+          allItems={allItems}
+          onSelectItem={setSelectedItem}
+        />
       ) : (
-        <div className="h-full flex flex-col overflow-y-auto pb-8 pr-2 w-full animate-in fade-in duration-300">
-          <div className="shrink-0 mb-4 space-y-1">
-            <h1 className="text-xl font-semibold tracking-tight">Insight</h1>
-            <p className="text-gray-500 text-xs">AI-filtered high-value intelligence from across the web.</p>
+      <div className={`${pageUi.pageShell} w-full animate-in fade-in duration-300`}>
+          <div className={`shrink-0 ${pageUi.pageHeader}`}>
+            <div className="space-y-1">
+              <h1 className={pageUi.pageTitle}>News</h1>
+              <p className={pageUi.pageSubtitle}>AI-filtered high-value news from across the web.</p>
+            </div>
+            <DateScopeDropdown
+              label={timeRange}
+              onChange={(label, filter) => {
+                setTimeRange(label);
+                setDateFilter(filter);
+                loadHotspots(filter);
+              }}
+            />
           </div>
 
-          <div className="shrink-0 flex gap-3 mb-4">
+          <div className="shrink-0 mb-6 flex gap-3">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
                 placeholder="Search titles, tags..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 bg-white border border-[#EAEAEA] rounded-md text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 transition-all shadow-sm"
+                className={controlUi.searchInput}
               />
             </div>
             <button
               onClick={handleRefresh}
               disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-2 bg-white border border-[#EAEAEA] rounded-md text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm disabled:opacity-50"
+              className={controlUi.secondaryButton}
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
               Refresh
             </button>
           </div>
 
-          <div className="shrink-0 mb-4 flex flex-wrap gap-2">
-            {categories.map(cat => (
+          <div className="shrink-0 mb-3 flex items-start gap-3">
+            <span className="w-14 shrink-0 pt-1 text-xs font-medium text-gray-500">Source:</span>
+            <div className="flex flex-wrap gap-2">
               <button
-                key={cat}
-                onClick={() => setActiveSource(cat)}
-                className={`px-3 py-1.5 rounded-full text-[10px] font-medium transition-all ${
-                  activeSource === cat
-                    ? 'bg-purple-600 text-white shadow-sm'
-                    : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
+                onClick={() => setActiveSource('All')}
+                className={`${
+                  activeSource === 'All'
+                    ? controlUi.chipActive
+                    : controlUi.chipInactive
                 }`}
               >
-                {cat}
+                All ({allItems.length})
               </button>
-            ))}
+              {sourceFilters.map(source => (
+                <button
+                  key={source.name}
+                  onClick={() => setActiveSource(source.name)}
+                  className={`${
+                    activeSource === source.name
+                      ? controlUi.chipActive
+                      : controlUi.chipInactive
+                  }`}
+                >
+                  {source.name} ({source.count})
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="shrink-0 mb-6 flex items-start gap-3">
+            <span className="w-14 shrink-0 pt-1 text-xs font-medium text-gray-500">Topic:</span>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setActiveTopic('All')}
+                className={activeTopic === 'All' ? controlUi.chipActive : controlUi.chipInactive}
+              >
+                All ({allItems.length})
+              </button>
+              {topicFilters.map(tag => (
+                <button
+                  key={tag.name}
+                  onClick={() => setActiveTopic(tag.name)}
+                  className={activeTopic === tag.name ? controlUi.chipActive : controlUi.chipInactive}
+                >
+                  {tag.name} ({tag.count})
+                </button>
+              ))}
+            </div>
           </div>
 
           {loading ? (
             <div className="flex items-center justify-center py-16 text-gray-400 text-sm">Loading...</div>
+          ) : allItems.length === 0 ? (
+            <DataStatusPanel status={emptyStatus || createNoDataHint([])} />
           ) : filteredNews.length === 0 ? (
             <div className="flex items-center justify-center py-16 text-gray-400 text-sm">
-              No items found. Try a different date or click Collect Now on the Overview page.
+              No items match your search/filter.
             </div>
           ) : (
-            <div className="flex-1 flex flex-col gap-3">
-              {filteredNews.map(item => (
+            <div className="flex-1 flex flex-col gap-4">
+              {pageNews.map(item => (
                 <NewsCard
                   key={item.id}
                   item={item}
@@ -141,9 +286,16 @@ export function NewsFeed({ selectedHotspotId, onClearSelection }: NewsFeedProps)
                   isSelected={selectedItem?.id === item.id}
                 />
               ))}
+              <PaginationControls
+                totalItems={filteredNews.length}
+                currentPage={safeCurrentPage}
+                pageSize={pageSize}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={setPageSize}
+              />
             </div>
           )}
-        </div>
+      </div>
       )}
     </div>
   );

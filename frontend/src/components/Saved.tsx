@@ -2,18 +2,39 @@ import React, { useState, useEffect } from 'react';
 import { NewsItem } from '../types';
 import { NewsCard } from './NewsCard';
 import { NewsDetail } from './NewsDetail';
+import { PaginationControls } from './PaginationControls';
+import { DataStatusPanel } from './DataStatusPanel';
 import { Bookmark, Upload, Link as LinkIcon, Plus, FileText, X } from 'lucide-react';
-import { fetchHotspots, fetchLatestDate, Hotspot } from '../api';
+import { fetchHotspots, fetchSourceStatus, Hotspot } from '../api';
+import { createNoDataHint, createRequestErrorHint, DataStatusHint } from '../dataStatus';
+import { inferSourceGroup } from '../sourceGrouping';
+import { controlUi, pageUi } from './designSystem';
 
 function hotspotToNewsItem(h: Hotspot): NewsItem {
+  const titleZh = (h.title_zh || '').trim();
+  const titleFallbackPlaceholder = titleZh === '外文标题（请查看原文）';
+  const displayTitle = titleZh && !titleFallbackPlaceholder ? titleZh : h.title;
+
+  const rawContent = (h.content || '').trim();
+  const rawSummary = (h.ai_summary || '').trim();
+  const contentLooksBroken = /the media could not be played|temporarily unavailable|access denied|unsupported browser/i.test(rawContent);
+  let displaySummary = rawSummary;
+  if (!displaySummary || displaySummary.includes('AI摘要服务暂时繁忙') || displaySummary.includes('内容太短，无法生成摘要')) {
+    displaySummary = rawContent ? rawContent.slice(0, 240) : '';
+  }
+  if (contentLooksBroken) {
+    displaySummary = '该条内容抓取失败（源站返回错误文案），请稍后重试抓取或检查数据源配置。';
+  }
+
   return {
     id: h.id,
-    title: h.title_zh || h.title,
+    title: displayTitle,
     source: h.source,
-    sourcePlatform: h.category || h.source,
-    sourceType: h.category || '新闻类',
+    sourcePlatform: inferSourceGroup(h.source),
+    sourceType: h.category || 'General',
     score: h.total_score || 0,
-    summary: h.ai_summary || h.content?.slice(0, 200) || '',
+    summary: displaySummary,
+    ai_summary: h.ai_summary,
     content: h.content,
     url: h.url,
     tags: (h.tags || []).map((t, i) => ({ id: `${h.id}-t${i}`, name: t, type: 'ai' as const })),
@@ -28,17 +49,33 @@ export function Saved() {
   const [importValue, setImportValue] = useState('');
   const [savedItems, setSavedItems] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [emptyStatus, setEmptyStatus] = useState<DataStatusHint | null>(null);
 
   useEffect(() => {
-    fetchLatestDate().then(d => fetchHotspots(d, 50))
+    setLoading(true);
+    setEmptyStatus(null);
+    fetchHotspots(undefined, 50)
       .then(({ hotspots }) => {
         const topItems = hotspots
           .filter(h => (h.total_score || 0) >= 7)
           .slice(0, 12)
           .map(hotspotToNewsItem);
         setSavedItems(topItems);
+        if (topItems.length === 0) {
+          fetchSourceStatus()
+            .then(statuses => setEmptyStatus(createNoDataHint(statuses)))
+            .catch(error => setEmptyStatus(createRequestErrorHint(error, 'Saved 数据状态检测失败')))
+            .finally(() => setLoading(false));
+          return;
+        }
         setLoading(false);
-      }).catch(() => setLoading(false));
+      }).catch((error) => {
+        setSavedItems([]);
+        setEmptyStatus(createRequestErrorHint(error, 'Saved 数据加载失败'));
+        setLoading(false);
+      });
   }, []);
 
   const handleImport = () => {
@@ -61,27 +98,41 @@ export function Saved() {
     setImportValue('');
   };
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [savedItems, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(savedItems.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStart = (safeCurrentPage - 1) * pageSize;
+  const pageItems = savedItems.slice(pageStart, pageStart + pageSize);
+
   if (selectedNews) {
     return (
       <div className="h-full w-full animate-in fade-in duration-300">
-        <NewsDetail item={selectedNews} onBack={() => setSelectedNews(null)} />
+        <NewsDetail
+          item={selectedNews}
+          onBack={() => setSelectedNews(null)}
+          allItems={savedItems}
+          onSelectItem={setSelectedNews}
+        />
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col overflow-y-auto pb-8 pr-2 relative">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-6">
+    <div className={`${pageUi.pageShell} relative`}>
+      <div className={pageUi.pageHeader}>
         <div className="space-y-1">
-          <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2">
+          <h1 className={`${pageUi.pageTitle} flex items-center gap-2`}>
             <Bookmark className="w-5 h-5 text-purple-600" />
             Saved Content
           </h1>
-          <p className="text-gray-500 text-xs">High-score insights (7+) from today's collection.</p>
+          <p className={pageUi.pageSubtitle}>High-score insights (7+) from today's collection.</p>
         </div>
         <button
           onClick={() => setIsImportModalOpen(true)}
-          className="flex items-center gap-1.5 px-4 py-2 bg-gray-900 text-white rounded-md text-xs font-medium hover:bg-gray-800 transition-colors shadow-sm"
+          className={controlUi.darkButton}
         >
           <Plus className="w-3.5 h-3.5" />
           Import Content
@@ -91,12 +142,10 @@ export function Saved() {
       {loading ? (
         <div className="flex items-center justify-center py-16 text-gray-400 text-sm">Loading...</div>
       ) : savedItems.length === 0 ? (
-        <div className="flex items-center justify-center py-16 text-gray-400 text-sm">
-          No high-score items today. Try collecting data first.
-        </div>
+        <DataStatusPanel status={emptyStatus || createNoDataHint([])} />
       ) : (
-        <div className="flex flex-col gap-3">
-          {savedItems.map(item => (
+        <div className="flex flex-col gap-4">
+          {pageItems.map(item => (
             <NewsCard
               key={item.id}
               item={item}
@@ -104,6 +153,13 @@ export function Saved() {
               isSelected={selectedNews?.id === item.id}
             />
           ))}
+          <PaginationControls
+            totalItems={savedItems.length}
+            currentPage={safeCurrentPage}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+          />
         </div>
       )}
 

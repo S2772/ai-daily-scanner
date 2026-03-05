@@ -15,6 +15,7 @@ export interface NewsItem {
   sourceType: SourceType;
   score: number; // 1-10
   summary: string;
+  ai_summary?: string;
   content: string;
   url: string;
   tags: Tag[];

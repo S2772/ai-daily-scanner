@@ -1,6 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Calendar, TrendingUp, TrendingDown, Activity, ChevronDown, ArrowRight, Zap, Target, RefreshCw } from 'lucide-react';
-import { fetchSummaryStats, fetchTrend, fetchHotspots, fetchOpportunities, fetchSourceStatus, triggerCollect, Hotspot, Opportunity, SourceStatus, SummaryStats, TrendData } from '../api';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Activity, ArrowRight, Zap, Target, RefreshCw } from 'lucide-react';
+import { fetchSummaryStats, fetchTrend, fetchHotspots, fetchHotspotSourceGroups, fetchOpportunities, fetchSourceStatus, triggerCollect, Hotspot, HotspotSourceGroup, Opportunity, SummaryStats, TrendData, DateFilter } from '../api';
+import { DateScopeDropdown } from './DateScopeDropdown';
+import { DataStatusPanel } from './DataStatusPanel';
+import { createNoDataHint, createRequestErrorHint, DataStatusHint } from '../dataStatus';
+import { inferSourceGroup, SOURCE_GROUP_ORDER } from '../sourceGrouping';
 
 const StatCard = ({ title, value, subtitle, onClick }: { title: string; value: string; subtitle: string; onClick?: () => void }) => (
   <div
@@ -18,45 +22,71 @@ export function Overview({ setActiveTab, onSelectHotspot, onSelectOpp }: {
   onSelectHotspot?: (id?: string) => void;
   onSelectOpp?: (id?: string) => void;
 }) {
+  type SourceGroup = typeof SOURCE_GROUP_ORDER[number];
+  const now = new Date();
+  const currentDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const [timeRange, setTimeRange] = useState('Today');
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [dateFilter, setDateFilter] = useState<DateFilter>({ date: currentDate });
   const [collecting, setCollecting] = useState(false);
   const [collectMsg, setCollectMsg] = useState('');
-  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const [stats, setStats] = useState<SummaryStats | null>(null);
   const [trend, setTrend] = useState<TrendData | null>(null);
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
+  const [sourceGroups, setSourceGroups] = useState<HotspotSourceGroup[]>([]);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
-  const [sourceStatuses, setSourceStatuses] = useState<SourceStatus[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeDate, setActiveDate] = useState<string>(currentDate);
+  const [dataStatusHint, setDataStatusHint] = useState<DataStatusHint | null>(null);
 
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsDropdownOpen(false);
-      }
+  const formatActiveDate = (filter: DateFilter, summary: SummaryStats) => {
+    if (summary.all_time === '1' || filter.allTime) return 'all time';
+    if (summary.start_date && summary.end_date) return `${summary.start_date} ~ ${summary.end_date}`;
+    if (summary.date) return summary.date;
+    if (filter.startDate || filter.endDate) {
+      const start = filter.startDate || filter.endDate || '';
+      const end = filter.endDate || filter.startDate || '';
+      return start && end ? `${start} ~ ${end}` : start || end || currentDate;
     }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    return filter.date || currentDate;
+  };
 
-  useEffect(() => {
+  const loadOverviewData = async (filter: DateFilter) => {
     setLoading(true);
-    Promise.all([
-      fetchSummaryStats(),
-      fetchTrend(30),
-      fetchHotspots(undefined, 10),
-      fetchOpportunities(undefined, 5),
-      fetchSourceStatus(),
-    ]).then(([s, t, h, o, ss]) => {
+    setDataStatusHint(null);
+    try {
+      const [s, t, h, sg, o, ss] = await Promise.all([
+        fetchSummaryStats(filter),
+        fetchTrend(30),
+        fetchHotspots(filter, 10),
+        fetchHotspotSourceGroups(filter),
+        fetchOpportunities(filter, 5),
+        fetchSourceStatus(filter),
+      ]);
       setStats(s);
       setTrend(t);
       setHotspots(h.hotspots);
+      setSourceGroups(sg);
       setOpportunities(o);
-      setSourceStatuses(ss);
+      setActiveDate(formatActiveDate(filter, s));
+      const total = (s.hotspot_count || 0) + (s.opportunity_count || 0) + (s.note_count || 0);
+      if (total === 0) {
+        setDataStatusHint(createNoDataHint(ss));
+      }
+    } catch (error) {
+      setStats(null);
+      setTrend(null);
+      setHotspots([]);
+      setSourceGroups([]);
+      setOpportunities([]);
+      setDataStatusHint(createRequestErrorHint(error, 'Overview 数据加载失败'));
+    } finally {
       setLoading(false);
-    }).catch(() => setLoading(false));
+    }
+  };
+
+  useEffect(() => {
+    loadOverviewData(dateFilter);
   }, []);
 
   const handleCollect = async () => {
@@ -64,24 +94,39 @@ export function Overview({ setActiveTab, onSelectHotspot, onSelectOpp }: {
     setCollectMsg('');
     try {
       const res = await triggerCollect();
-      setCollectMsg(`Collected: ${res.hotspots_count} hotspots, ${res.opportunities_count} opportunities`);
-      const [s, h, o] = await Promise.all([fetchSummaryStats(), fetchHotspots(undefined, 10), fetchOpportunities(undefined, 5)]);
-      setStats(s);
-      setHotspots(h.hotspots);
-      setOpportunities(o);
+      setCollectMsg(`Collected: ${res.hotspots_count} news, ${res.opportunities_count} opportunities`);
+      await loadOverviewData(dateFilter);
     } catch {
       setCollectMsg('Collection failed');
     }
     setCollecting(false);
   };
 
-  const timeOptions = ['Today', 'Yesterday', 'This Week', 'This Month', 'All Time'];
+  const sourceCategoryStats = useMemo(() => {
+    const grouped = new Map<string, { newsCount: number; sourceCount: number }>();
+    for (const sourceRow of sourceGroups) {
+      const group = inferSourceGroup(sourceRow.source);
+      if (!grouped.has(group)) {
+        grouped.set(group, { newsCount: 0, sourceCount: 0 });
+      }
+      const stat = grouped.get(group)!;
+      stat.newsCount += sourceRow.count || 0;
+      stat.sourceCount += 1;
+    }
 
-  const seenSources = new Map<string, SourceStatus>();
-  for (const s of sourceStatuses) {
-    if (!seenSources.has(s.source)) seenSources.set(s.source, s);
-  }
-  const uniqueSources: SourceStatus[] = Array.from(seenSources.values()).slice(0, 4);
+    return SOURCE_GROUP_ORDER
+      .map(group => {
+        const stat = grouped.get(group);
+        if (!stat) return null;
+        return {
+          group,
+          newsCount: stat.newsCount,
+          sourceCount: stat.sourceCount,
+        };
+      })
+      .filter((item): item is { group: SourceGroup; newsCount: number; sourceCount: number } => item !== null)
+      .sort((a, b) => b.newsCount - a.newsCount);
+  }, [sourceGroups]);
 
   return (
     <div className="h-full flex flex-col overflow-y-auto pb-8 pr-2">
@@ -101,34 +146,24 @@ export function Overview({ setActiveTab, onSelectHotspot, onSelectOpp }: {
             {collecting ? 'Collecting...' : 'Collect Now'}
           </button>
 
-          <div className="relative" ref={dropdownRef}>
-            <button
-              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-              className="flex items-center gap-2 px-3 py-1.5 bg-white border border-[#EAEAEA] rounded-md text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm"
-            >
-              <Calendar className="w-3.5 h-3.5 text-gray-400" />
-              {timeRange}
-              <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
-            </button>
-            {isDropdownOpen && (
-              <div className="absolute right-0 mt-1 w-36 bg-white border border-[#EAEAEA] rounded-md shadow-lg z-10 py-1">
-                {timeOptions.map(option => (
-                  <button
-                    key={option}
-                    onClick={() => { setTimeRange(option); setIsDropdownOpen(false); }}
-                    className={`w-full text-left px-3 py-1.5 text-xs ${timeRange === option ? 'bg-purple-50 text-purple-700 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <DateScopeDropdown
+            label={timeRange}
+            onChange={(label, filter) => {
+              setTimeRange(label);
+              setDateFilter(filter);
+              loadOverviewData(filter);
+            }}
+          />
         </div>
       </div>
 
       {collectMsg && (
         <div className="mb-4 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-md text-xs text-emerald-700">{collectMsg}</div>
+      )}
+      {!loading && dataStatusHint && (
+        <div className="mb-4">
+          <DataStatusPanel status={dataStatusHint} />
+        </div>
       )}
 
       {loading ? (
@@ -136,44 +171,65 @@ export function Overview({ setActiveTab, onSelectHotspot, onSelectOpp }: {
       ) : (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <StatCard title="Today's Hotspots" value={String(stats?.hotspot_count ?? 0)} subtitle="collected today" onClick={() => onSelectHotspot ? onSelectHotspot() : setActiveTab('feed')} />
-            <StatCard title="Opportunities" value={String(stats?.opportunity_count ?? 0)} subtitle="discovered today" onClick={() => onSelectOpp ? onSelectOpp() : setActiveTab('discover')} />
-            <StatCard title="Notes" value={String(stats?.note_count ?? 0)} subtitle="saved today" onClick={() => setActiveTab('notes')} />
+            <StatCard title="News" value={String(stats?.hotspot_count ?? 0)} subtitle={activeDate} onClick={() => onSelectHotspot ? onSelectHotspot() : setActiveTab('feed')} />
+            <StatCard title="Opportunities" value={String(stats?.opportunity_count ?? 0)} subtitle={activeDate} onClick={() => onSelectOpp ? onSelectOpp() : setActiveTab('discover')} />
+            <StatCard title="Notes" value={String(stats?.note_count ?? 0)} subtitle={activeDate} onClick={() => setActiveTab('notes')} />
             <StatCard title="Total Sources" value={String(trend?.total_sources ?? 0)} subtitle="active sources" onClick={() => setActiveTab('sources')} />
           </div>
 
-          {/* Active Data Sources */}
+          {/* Source Categories */}
           <div className="bg-white border border-[#EAEAEA] rounded-lg p-4 flex flex-col mb-8">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-semibold flex items-center gap-1.5 text-gray-900">
                 <Activity className="w-4 h-4 text-blue-500" />
-                Active Data Sources
+                Source Categories
               </h3>
-              <button onClick={() => setActiveTab('sources')} className="text-xs font-medium text-purple-600 hover:text-purple-700 flex items-center gap-0.5">
-                Manage <ArrowRight className="w-3.5 h-3.5" />
+              <button onClick={() => onSelectHotspot ? onSelectHotspot() : setActiveTab('feed')} className="text-xs font-medium text-purple-600 hover:text-purple-700 flex items-center gap-0.5">
+                View News <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
-            {uniqueSources.length > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {uniqueSources.map(s => (
-                  <div key={s.source} className="p-3 rounded-lg border border-gray-100 bg-gray-50 flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-gray-700 truncate">{s.source}</span>
-                      <div className={`w-2 h-2 rounded-full ${s.status === 'success' ? 'bg-emerald-500' : 'bg-red-400'}`}></div>
+            {sourceCategoryStats.length > 0 ? (
+              <div className="flex gap-6">
+                {/* Left: Category List */}
+                <div className="flex-1 grid grid-cols-2 gap-3">
+                  {sourceCategoryStats.map(stat => (
+                    <div 
+                      key={stat.group} 
+                      onClick={() => {
+                        if (onSelectHotspot) {
+                          onSelectHotspot();
+                          // TODO: 传递 sourceType 筛选参数
+                        } else {
+                          setActiveTab('feed');
+                        }
+                      }}
+                      className="p-3 rounded-lg border border-gray-100 bg-gray-50 hover:border-purple-300 hover:bg-purple-50/30 transition-all cursor-pointer flex flex-col gap-2"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-gray-700 truncate">{stat.group}</span>
+                        <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded">{stat.newsCount}</span>
+                      </div>
+                      <div className="text-[10px] text-gray-500">{stat.newsCount} news · {stat.sourceCount} sources</div>
                     </div>
-                    <div className="text-[10px] text-gray-500">{s.item_count} items · {s.source_type}</div>
+                  ))}
+                </div>
+                {/* Right: Pie Chart Placeholder */}
+                <div className="w-48 h-48 flex items-center justify-center border border-gray-200 rounded-lg bg-gray-50">
+                  <div className="text-xs text-gray-400 text-center">
+                    <Activity className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+                    Chart Coming Soon
                   </div>
-                ))}
+                </div>
               </div>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {['Twitter', 'WeChat RSS', 'RSS Feeds', 'Official Blogs'].map(name => (
+                {['Research', 'Official / Blogs', 'WeChat / 公众号', 'Social'].map(name => (
                   <div key={name} className="p-3 rounded-lg border border-gray-100 bg-gray-50 flex flex-col gap-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-medium text-gray-700">{name}</span>
                       <div className="w-2 h-2 rounded-full bg-gray-300"></div>
                     </div>
-                    <div className="text-[10px] text-gray-500">No recent data</div>
+                    <div className="text-[10px] text-gray-500">No recent news</div>
                   </div>
                 ))}
               </div>
@@ -186,12 +242,12 @@ export function Overview({ setActiveTab, onSelectHotspot, onSelectOpp }: {
           </div>
 
           <div className="flex flex-col gap-4">
-            {/* Priority Insights */}
+            {/* Priority News */}
             <div className="bg-white border border-[#EAEAEA] rounded-lg p-4 flex flex-col">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-semibold flex items-center gap-1.5 text-gray-900">
                   <Zap className="w-4 h-4 text-amber-500" />
-                  Priority Insights
+                  Priority News
                 </h3>
                 <button onClick={() => onSelectHotspot ? onSelectHotspot() : setActiveTab('feed')} className="text-xs font-medium text-purple-600 hover:text-purple-700 flex items-center gap-0.5">
                   View All <ArrowRight className="w-3.5 h-3.5" />
@@ -199,7 +255,7 @@ export function Overview({ setActiveTab, onSelectHotspot, onSelectOpp }: {
               </div>
               <div className="space-y-4 flex-1">
                 {hotspots.length === 0 ? (
-                  <p className="text-xs text-gray-400">No hotspots today. Click "Collect Now" to fetch data.</p>
+                  <p className="text-xs text-gray-400">No news for the selected period. Click "Collect Now" to fetch data.</p>
                 ) : hotspots.slice(0, 4).map(h => (
                   <div
                     key={h.id}
@@ -237,7 +293,7 @@ export function Overview({ setActiveTab, onSelectHotspot, onSelectOpp }: {
               </div>
               <div className="space-y-4 flex-1">
                 {opportunities.length === 0 ? (
-                  <p className="text-xs text-gray-400">No opportunities today.</p>
+                  <p className="text-xs text-gray-400">No opportunities for the selected period.</p>
                 ) : opportunities.slice(0, 3).map(opp => (
                   <div
                     key={opp.id}

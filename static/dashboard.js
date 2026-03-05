@@ -741,7 +741,7 @@ async function loadData() {
     };
     const [summary, hotspotsData, opportunities, notes, sourceStatus] = await Promise.all([
       safeFetch(`/api/summary?date=${encodeURIComponent(date)}`, { hotspot_count: 0, opportunity_count: 0, note_count: 0 }),
-      safeFetch(`/api/hotspots?date=${encodeURIComponent(date)}`, { hotspots: [] }),
+      safeFetch(`/api/hotspots?date=${encodeURIComponent(date)}&fill_missing=1`, { hotspots: [] }),
       safeFetch(`/api/opportunities?date=${encodeURIComponent(date)}`, { opportunities: [] }),
       safeFetch(`/api/notes?date=${encodeURIComponent(date)}`, { notes: [] }),
       safeFetch(`/api/source-status?date=${encodeURIComponent(date)}`, { source_status: [] }),
