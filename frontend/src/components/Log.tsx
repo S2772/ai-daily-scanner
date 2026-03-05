@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Calendar, Filter, ChevronDown, Activity, TrendingUp } from 'lucide-react';
+import { FileText, Filter, ChevronDown, Activity, TrendingUp } from 'lucide-react';
 import { fetchTrend, fetchSourceStatus, fetchLatestDate, fetchCollectRuns, CollectRun, SourceStatus, TrendData } from '../api';
 
 export function Log() {
@@ -185,13 +185,19 @@ export function Log() {
                 <TrendingUp className="w-4 h-4 text-purple-600" />
                 Collection Trend ({trendDays}D)
               </h3>
-              <div className="flex items-end gap-1 h-24 overflow-x-auto">
+              <div className="flex items-end gap-1 h-28 overflow-x-auto">
                 {trend.trend.slice(-trendDays).map(d => {
                   const max = Math.max(...trend.trend.map(x => x.count), 1);
-                  const h = Math.max(4, Math.round((d.count / max) * 88));
+                  const h = Math.max(4, Math.round((d.count / max) * 104));
                   return (
-                    <div key={d.date} className="flex flex-col items-center gap-1 shrink-0" title={`${d.date}: ${d.count} items (avg score ${d.avg_score})`}>
-                      <div className="w-4 bg-purple-400 rounded-t hover:bg-purple-600 transition-colors" style={{ height: `${h}px` }}></div>
+                    <div key={d.date} className="flex flex-col items-center gap-1 shrink-0 group">
+                      <div className="relative">
+                        <div className="absolute -top-12 left-1/2 -translate-x-1/2 hidden group-hover:block whitespace-nowrap bg-gray-900 text-white text-[10px] px-2 py-1 rounded shadow-lg">
+                          <div className="font-medium">{d.date}</div>
+                          <div>{d.count} items · avg {d.avg_score}</div>
+                        </div>
+                        <div className="w-4 bg-purple-400 rounded-t hover:bg-purple-600 transition-colors" style={{ height: `${h}px` }}></div>
+                      </div>
                     </div>
                   );
                 })}

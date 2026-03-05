@@ -902,6 +902,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
 
             finished_at = datetime.now()
+            # Run-level dedupe stats (soft-dedupe means: existing (url,source) row is updated)
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS items_total,
+                       SUM(CASE WHEN created_at >= ? AND created_at < ? THEN 1 ELSE 0 END) AS items_new
+                FROM hotspots
+                """,
+                (
+                    started_at.strftime("%Y-%m-%d %H:%M:%S"),
+                    finished_at.strftime("%Y-%m-%d %H:%M:%S"),
+                ),
+            )
+            items_row = cursor.fetchone() or {}
+            items_total = int(items_row.get("items_total") or 0)
+            items_new = int(items_row.get("items_new") or 0)
+            items_existing = max(0, int(hotspots_count or 0) - items_new)
+
             cursor.execute(
                 """
                 UPDATE collect_runs
@@ -911,7 +928,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     opportunities_count = ?,
                     sources_success = ?,
                     sources_empty = ?,
-                    sources_error = ?
+                    sources_error = ?,
+                    items_total = ?,
+                    items_new = ?,
+                    items_existing = ?
                 WHERE id = ?
                 """,
                 (
@@ -922,6 +942,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     sources_success,
                     sources_empty,
                     sources_error,
+                    items_total,
+                    items_new,
+                    items_existing,
                     run_id,
                 ),
             )
