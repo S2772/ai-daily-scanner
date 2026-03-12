@@ -4,7 +4,11 @@
 """
 
 import sys
-sys.path.insert(0, '/Users/s/.openclaw/workspace-jarvis/ai_daily_scanner')
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.scraper import AIScraper
 

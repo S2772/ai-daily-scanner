@@ -52,6 +52,13 @@
 4. **数据展示**：Web界面展示和交互
 5. **用户交互**：笔记、筛选、分析
 
+
+## 前端 UI 入口（给 Insight）
+
+- 当前需要优化的前端在 `frontend/`（React + Vite），访问地址：`http://127.0.0.1:3000/`。
+- 旧版模板页面位于 `templates/` + `static/`，不是主要 UI 优化目标。
+- 详细定位文档：`INSIGHT_FRONTEND_CONTEXT.md`。
+
 ## 快速开始
 
 ### 1. 环境要求
@@ -74,7 +81,7 @@ python webapp.py
 ```
 
 ### 4. 访问系统
-打开浏览器访问：http://localhost:5000
+打开浏览器访问：前端 `http://127.0.0.1:3000/`（主UI），后端 `http://127.0.0.1:6003/`
 
 ### 5. 填充数据
 ```bash
@@ -169,6 +176,15 @@ ai_daily_scanner/
 1. **前端开发**：修改HTML/CSS/JavaScript文件
 2. **后端开发**：添加新的API接口
 3. **数据库开发**：修改数据库表结构
+
+### 运行测试
+```bash
+# 推荐：运行当前仓库全部 Python 测试
+python3 -m unittest discover -v
+
+# 如果已安装 requirements.txt，也支持 pytest 入口
+python3 -m pytest -q
+```
 
 ### 样式定制
 1. **修改主题**：编辑`static/dashboard.css`中的CSS变量

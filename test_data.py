@@ -3,14 +3,29 @@
 测试数据生成 - 用于验证系统功能
 """
 
+import os
 import sqlite3
 import json
-from datetime import datetime, timedelta
 import random
 
-def create_test_data():
+DEFAULT_DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "data", "ai_hotspots.db"))
+
+
+def ensure_safe_db_path(db_path: str) -> str:
+    resolved = os.path.abspath(db_path)
+    allow_live_db = (os.getenv("ALLOW_DESTRUCTIVE_TEST_DATA", "") or "").strip().lower() in {"1", "true", "yes"}
+    if resolved == DEFAULT_DB_PATH and not allow_live_db:
+        raise RuntimeError(
+            "Refusing to overwrite the default live database. "
+            "Set ALLOW_DESTRUCTIVE_TEST_DATA=1 to proceed intentionally."
+        )
+    return resolved
+
+
+def create_test_data(db_path: str = DEFAULT_DB_PATH):
     """创建测试数据"""
-    conn = sqlite3.connect("data/ai_hotspots.db")
+    safe_db_path = ensure_safe_db_path(db_path)
+    conn = sqlite3.connect(safe_db_path)
     cursor = conn.cursor()
     
     # 清空现有数据

@@ -2,9 +2,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Activity, ArrowRight, Zap, Target, RefreshCw } from 'lucide-react';
 import { fetchSummaryStats, fetchTrend, fetchHotspots, fetchHotspotSourceGroups, fetchOpportunities, fetchSourceStatus, triggerCollect, Hotspot, HotspotSourceGroup, Opportunity, SummaryStats, TrendData, DateFilter } from '../api';
 import { DateScopeDropdown } from './DateScopeDropdown';
+import { DateFieldToggle } from './DateFieldToggle';
+import { useAppState } from '../appState';
 import { DataStatusPanel } from './DataStatusPanel';
 import { createNoDataHint, createRequestErrorHint, DataStatusHint } from '../dataStatus';
 import { inferSourceGroup, SOURCE_GROUP_ORDER } from '../sourceGrouping';
+import { controlUi } from './designSystem';
 
 const StatCard = ({ title, value, subtitle, onClick }: { title: string; value: string; subtitle: string; onClick?: () => void }) => (
   <div
@@ -25,8 +28,9 @@ export function Overview({ setActiveTab, onSelectHotspot, onSelectOpp }: {
   type SourceGroup = typeof SOURCE_GROUP_ORDER[number];
   const now = new Date();
   const currentDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const [timeRange, setTimeRange] = useState('Today');
-  const [dateFilter, setDateFilter] = useState<DateFilter>({ date: currentDate });
+  const { dateScopeLabel, dateScopeFilter, setDateScope, applyGlobalFilters } = useAppState();
+  const [timeRange, setTimeRange] = useState(dateScopeLabel);
+  const [dateFilter, setDateFilter] = useState<DateFilter>(() => dateScopeFilter);
   const [collecting, setCollecting] = useState(false);
   const [collectMsg, setCollectMsg] = useState('');
 
@@ -52,23 +56,24 @@ export function Overview({ setActiveTab, onSelectHotspot, onSelectOpp }: {
   };
 
   const loadOverviewData = async (filter: DateFilter) => {
+    const effectiveFilter = applyGlobalFilters(filter);
     setLoading(true);
     setDataStatusHint(null);
     try {
       const [s, t, h, sg, o, ss] = await Promise.all([
-        fetchSummaryStats(filter),
+        fetchSummaryStats(effectiveFilter),
         fetchTrend(30),
-        fetchHotspots(filter, 10),
-        fetchHotspotSourceGroups(filter),
-        fetchOpportunities(filter, 5),
-        fetchSourceStatus(filter),
+        fetchHotspots(effectiveFilter, 10),
+        fetchHotspotSourceGroups(effectiveFilter),
+        fetchOpportunities(effectiveFilter, 5),
+        fetchSourceStatus(effectiveFilter),
       ]);
       setStats(s);
       setTrend(t);
       setHotspots(h.hotspots);
       setSourceGroups(sg);
       setOpportunities(o);
-      setActiveDate(formatActiveDate(filter, s));
+      setActiveDate(formatActiveDate(effectiveFilter, s));
       const total = (s.hotspot_count || 0) + (s.opportunity_count || 0) + (s.note_count || 0);
       if (total === 0) {
         setDataStatusHint(createNoDataHint(ss));
@@ -94,10 +99,10 @@ export function Overview({ setActiveTab, onSelectHotspot, onSelectOpp }: {
     setCollectMsg('');
     try {
       const res = await triggerCollect();
-      setCollectMsg(`Collected: ${res.hotspots_count} news, ${res.opportunities_count} opportunities`);
+      setCollectMsg(`Collection started. Run #${res.run_id} is ${res.status}. Overview will refresh shortly.`);
       await loadOverviewData(dateFilter);
-    } catch {
-      setCollectMsg('Collection failed');
+    } catch (error: any) {
+      setCollectMsg(`Collection failed${error?.message ? `: ${error.message}` : ''}`);
     }
     setCollecting(false);
   };
@@ -140,17 +145,20 @@ export function Overview({ setActiveTab, onSelectHotspot, onSelectOpp }: {
           <button
             onClick={handleCollect}
             disabled={collecting}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 text-white rounded-md text-xs font-medium hover:bg-purple-700 disabled:opacity-60 transition-all shadow-sm"
+            className={controlUi.secondaryButton}
+            title="Collect now"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${collecting ? 'animate-spin' : ''}`} />
-            {collecting ? 'Collecting...' : 'Collect Now'}
+            <RefreshCw className={`h-3.5 w-3.5 ${collecting ? 'animate-spin' : ''}`} />
+            Collect Now
           </button>
+          <DateFieldToggle />
 
           <DateScopeDropdown
             label={timeRange}
             onChange={(label, filter) => {
               setTimeRange(label);
               setDateFilter(filter);
+              setDateScope(label, filter);
               loadOverviewData(filter);
             }}
           />
