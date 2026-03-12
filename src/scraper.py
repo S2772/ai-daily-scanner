@@ -10,24 +10,36 @@ import sqlite3
 import json
 import time
 import re
+import queue
+import threading
 import feedparser
 import xml.etree.ElementTree as ET
 from collections import Counter
 from typing import List, Dict, Any
 import hashlib
 from html.parser import HTMLParser
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone
 from .twitter_scraper import TwitterScraper
+from .ai_config import get_ai_api_config
 
-AI_API_CONFIG = {
-    "base_url": os.getenv("AI_API_BASE_URL", "https://bobdong.cn/v1/chat/completions"),
-    "api_key": os.getenv("AI_API_KEY", "sk-pkTNOMFFkTCohLxN8Fswqhr5pCbPxypDHRy8hoATEFbIO2El"),
-    "model": os.getenv("AI_API_MODEL", "gpt-5.2-codex"),
-    "fallback_models": [
-        m.strip()
-        for m in os.getenv("AI_API_FALLBACK_MODELS", "gpt-5.3-codex,gpt-5.2,gpt-4.1").split(",")
-        if m.strip()
-    ],
-}
+AI_API_CONFIG = get_ai_api_config(
+    default_model="gpt-5.2-codex",
+    default_fallback_models="gpt-5.3-codex,gpt-5.2,gpt-4.1",
+)
+
+
+def _get_timeout_seconds(env_key: str, default_value: float) -> float:
+    raw = os.getenv(env_key, "").strip()
+    if not raw:
+        return float(default_value)
+    try:
+        value = float(raw)
+    except Exception:
+        return float(default_value)
+    if value <= 0:
+        return float(default_value)
+    return value
 
 
 class _StripTagsParser(HTMLParser):
@@ -175,21 +187,61 @@ def clean_extracted_text(text: str) -> str:
 
 
 def strip_html_tags(html: str) -> str:
-    """Extract plain text from HTML, removing script/style content."""
-    if not html:
+    """Extract plain text from HTML.
+
+    For long-form sources (e.g. WeChat full HTML in WeWe-RSS feeds), being too
+    aggressive about skipping UI-like containers can drop the entire article.
+
+    We delegate to a relaxed extractor that only skips truly non-content tags.
+    """
+    from src.html_text import strip_html_tags_relaxed
+
+    return strip_html_tags_relaxed(html)
+
+
+def normalize_published_at(value: Any) -> str:
+    if value is None:
         return ""
-    parser = _StripTagsParser()
+    if isinstance(value, time.struct_time):
+        try:
+            return time.strftime("%Y-%m-%d %H:%M:%S", value)
+        except Exception:
+            return ""
+
+    text = str(value).strip()
+    if not text:
+        return ""
+
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(text, fmt)
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            pass
+
+    iso_candidate = text.replace("Z", "+00:00")
     try:
-        parser.feed(html)
-        return parser.get_text()
+        dt = datetime.fromisoformat(iso_candidate)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        pass
+
+    try:
+        dt = parsedate_to_datetime(text)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
-        # Fallback: crude tag removal
-        return clean_extracted_text(re.sub(r"<[^>]+>", " ", html))
+        return text
+
 
 class AIScraper:
     def __init__(self, db_path: str = "data/ai_hotspots.db"):
         """初始化爬虫，创建数据库连接"""
-        self.db_path = db_path
+        self.db_path = self._resolve_db_path(db_path)
+        self._ensure_db_parent_dir()
         self.init_database()
         
         # 从 sources.json 加载信息源配置
@@ -236,6 +288,20 @@ class AIScraper:
             "开源项目", "创业公司", "融资", "并购",
             "学术研究", "工程实践", "工具发布"
         ]
+
+    @staticmethod
+    def _resolve_db_path(db_path: str) -> str:
+        """将数据库路径标准化到项目根目录下，避免受运行目录影响。"""
+        if os.path.isabs(db_path):
+            return db_path
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(project_root, db_path)
+
+    def _ensure_db_parent_dir(self) -> None:
+        """确保数据库目录存在，避免 sqlite 无法打开文件。"""
+        parent = os.path.dirname(self.db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         
     def _load_sources_config(self) -> Dict[str, Any]:
         """从 sources.json 加载信息源配置"""
@@ -283,7 +349,12 @@ class AIScraper:
 
     def init_database(self):
         """初始化SQLite数据库"""
-        conn = sqlite3.connect(self.db_path)
+        try:
+            conn = sqlite3.connect(self.db_path)
+        except sqlite3.OperationalError as e:
+            raise RuntimeError(
+                f"无法打开数据库文件: {self.db_path}. 请检查目录权限与路径配置。"
+            ) from e
         cursor = conn.cursor()
         
         # 创建热点信息表
@@ -438,25 +509,25 @@ class AIScraper:
                 url = link_el.get('href', '') if link_el is not None else ""
                 content_el = entry.find('atom:content', ns)
                 raw_html = content_el.text or "" if content_el is not None else ""
-                # 提取纯文本（先不限制长度，让 strip_html_tags 处理完整 HTML）
                 clean_text = strip_html_tags(raw_html) if raw_html else ""
-                # 限制最终文本长度（保留足够长度用于 AI 摘要生成）
-                if len(clean_text) > 5000:
-                    clean_text = clean_text[:5000]
-                
-                # 修复：如果 title 太长（> 200 字符），说明 WeWe RSS 把全文放到了 title 里
-                # 这种情况下，把 title 当成 content，然后提取前 100 字符作为 title
+
                 if len(raw_title) > 200:
-                    # title 太长，把它当成 content
-                    if not clean_text:  # 如果 content 为空，使用 title 作为 content
+                    if not clean_text:
                         clean_text = raw_title
-                    # 提取前 100 字符作为 title（去掉换行符）
                     title = raw_title.replace('\n', ' ').replace('\r', '')[:100].strip()
                     if len(raw_title) > 100:
                         title += "..."
                 else:
                     title = raw_title
-                
+
+                if (not clean_text or len(clean_text) < 120 or 'Video Mini Program' in clean_text) and url:
+                    fetched_text = self.fetch_web_content(url)
+                    if fetched_text and len(fetched_text) > len(clean_text):
+                        clean_text = fetched_text
+
+                if len(clean_text) > 5000:
+                    clean_text = clean_text[:5000]
+
                 text_for_classify = title + " " + clean_text
                 item = {
                     "id": self.generate_id(url + title),
@@ -466,8 +537,11 @@ class AIScraper:
                     "source": feed_url,
                     "category": self.classify_content(text_for_classify),
                     "tags": json.dumps(self.extract_tags(text_for_classify)),
-                    # Atom <updated> or <published> (if present)
-                    "published_at": entry.get("updated") or entry.get("published") or "",
+                    "published_at": normalize_published_at(
+                        entry.findtext('atom:updated', default='', namespaces=ns)
+                        or entry.findtext('atom:published', default='', namespaces=ns)
+                        or ''
+                    ),
                 }
                 scores = self.calculate_scores_detailed(title, clean_text, item["category"])
                 item.update(scores)
@@ -511,21 +585,26 @@ class AIScraper:
                 for entry in feed.entries[:10]:
                     raw_content = entry.get("summary", "") or entry.get("description", "")
                     content = strip_html_tags(raw_content)
+                    article_url = entry.get("link", "")
+                    lowered_content = content.strip().lower()
+                    teaser_signals = (
+                        len(content) < 120
+                        or lowered_content in {"comments", "comment", "查看全文"}
+                        or content.endswith("查看全文")
+                    )
+                    if teaser_signals and article_url:
+                        fetched_text = self.fetch_web_content(article_url)
+                        if fetched_text and len(fetched_text) > len(content):
+                            content = fetched_text
                     text_for_classify = entry.get("title", "") + " " + content
 
                     published_at = ""
                     if entry.get("published_parsed"):
-                        try:
-                            published_at = time.strftime("%Y-%m-%d %H:%M:%S", entry.published_parsed)
-                        except Exception:
-                            published_at = ""
+                        published_at = normalize_published_at(entry.published_parsed)
                     if not published_at and entry.get("updated_parsed"):
-                        try:
-                            published_at = time.strftime("%Y-%m-%d %H:%M:%S", entry.updated_parsed)
-                        except Exception:
-                            published_at = ""
+                        published_at = normalize_published_at(entry.updated_parsed)
                     if not published_at:
-                        published_at = entry.get("published", "") or entry.get("updated", "") or ""
+                        published_at = normalize_published_at(entry.get("published", "") or entry.get("updated", "") or "")
 
                     item = {
                         "id": self.generate_id(entry.get("link", "") + entry.get("title", "")),
@@ -696,6 +775,8 @@ class AIScraper:
         source_text = (content or title or "").strip()
         if len(source_text) < 10:
             return self._summarize_fallback(title, content)
+        if not AI_API_CONFIG.get("api_key"):
+            return self._summarize_fallback(title, content)
 
         models = []
         if AI_API_CONFIG.get("model"):
@@ -783,7 +864,9 @@ class AIScraper:
             ai_summary = self._generate_ai_summary(item.get("title", ""), item.get("content", ""))
         title_zh = str(item.get("title_zh") or item.get("title") or "").strip()
         
-        published_at = item.get("published_at") or item.get("published") or item.get("updated")
+        published_at = normalize_published_at(
+            item.get("published_at") or item.get("published") or item.get("updated")
+        )
 
         # Soft-dedupe: if (url, source) already exists, reuse its id to avoid duplicating the same item
         url = item.get("url") or ""
@@ -808,7 +891,7 @@ class AIScraper:
             (
                 item["id"],
                 item["title"][:200],  # 限制标题长度
-                item["content"][:1000] if item.get("content") else "",  # 限制内容长度
+                item["content"][:20000] if item.get("content") else "",  # 限制内容长度（支持公众号全文展示）
                 url,
                 source,
                 item["category"],
@@ -929,6 +1012,27 @@ class AIScraper:
         conn.commit()
         conn.close()
         return opportunities
+
+    def _run_with_timeout(self, fn, timeout_seconds: float, timeout_message: str):
+        out: "queue.Queue[tuple]" = queue.Queue(maxsize=1)
+
+        def _worker():
+            try:
+                out.put(("ok", fn(), None))
+            except Exception as exc:
+                out.put(("err", exc, None))
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+        t.join(timeout_seconds)
+        if t.is_alive():
+            raise TimeoutError(timeout_message)
+        if out.empty():
+            raise RuntimeError("worker exited without result")
+        status, payload, _ = out.get_nowait()
+        if status == "err":
+            raise payload
+        return payload
     
     def run_daily_collection(self):
         """执行每日收集任务"""
@@ -936,38 +1040,80 @@ class AIScraper:
 
         all_items = []
         source_statuses = []
+        source_timeout = _get_timeout_seconds("COLLECT_SOURCE_TIMEOUT_SECONDS", 45.0)
+        twitter_timeout = _get_timeout_seconds("COLLECT_TWITTER_TIMEOUT_SECONDS", 480.0)
 
-        # 收集RSS订阅源
+        # 收集RSS订阅源：单源失败不可阻塞整次 run
         for feed_url in self.sources["rss_feeds"]:
             print(f"处理RSS源: {feed_url}")
-            result = self.parse_rss_feed_with_status(feed_url)
-            items = result["items"]
+            try:
+                result = self._run_with_timeout(
+                    lambda: self.parse_rss_feed_with_status(feed_url),
+                    source_timeout,
+                    f"source timeout after {int(source_timeout)}s: {feed_url}",
+                )
+            except Exception as e:
+                is_timeout = isinstance(e, TimeoutError) or "timeout" in str(e).lower()
+                result = {
+                    "source": feed_url,
+                    "source_type": "rss",
+                    "status": "error",
+                    "item_count": 0,
+                    "error_message": (
+                        f"TimeoutError: {e}" if is_timeout else f"{e.__class__.__name__}: {e}"
+                    ),
+                    "items": [],
+                }
+
+            items = result.get("items", []) or []
             all_items.extend(items)
             source_statuses.append(
                 {
-                    "source": result["source"],
-                    "source_type": result["source_type"],
-                    "status": result["status"],
-                    "item_count": result["item_count"],
-                    "error_message": result["error_message"],
+                    "source": result.get("source", feed_url),
+                    "source_type": result.get("source_type", "rss"),
+                    "status": result.get("status", "unknown"),
+                    "item_count": int(result.get("item_count", 0) or 0),
+                    "error_message": result.get("error_message", ""),
                 }
             )
             time.sleep(1)  # 礼貌延迟
 
         # 收集Twitter热点
         print("\n" + "="*50)
-        twitter_scraper = TwitterScraper(self.db_path)
-        twitter_count = twitter_scraper.run_twitter_collection()
-        source_statuses.append(
-            {
-                "source": "twitter",
-                "source_type": "twitter",
-                "status": "success" if twitter_count > 0 else "empty",
-                "item_count": twitter_count,
-                "error_message": "" if twitter_count > 0 else "未获取到推文",
-            }
-        )
-        all_items.extend([{"id": f"twitter_{i}"} for i in range(twitter_count)])  # 占位符
+        twitter_count = 0
+        try:
+            twitter_scraper = TwitterScraper(self.db_path)
+            twitter_count = int(
+                self._run_with_timeout(
+                    lambda: twitter_scraper.run_twitter_collection(),
+                    twitter_timeout,
+                    f"twitter timeout after {int(twitter_timeout)}s",
+                )
+                or 0
+            )
+            source_statuses.append(
+                {
+                    "source": "twitter",
+                    "source_type": "twitter",
+                    "status": "success" if twitter_count > 0 else "empty",
+                    "item_count": twitter_count,
+                    "error_message": "" if twitter_count > 0 else "未获取到推文",
+                }
+            )
+            all_items.extend([{"id": f"twitter_{i}"} for i in range(twitter_count)])  # 占位符
+        except Exception as e:
+            is_timeout = isinstance(e, TimeoutError) or "timeout" in str(e).lower()
+            source_statuses.append(
+                {
+                    "source": "twitter",
+                    "source_type": "twitter",
+                    "status": "error",
+                    "item_count": 0,
+                    "error_message": (
+                        f"TimeoutError: {e}" if is_timeout else f"{e.__class__.__name__}: {e}"
+                    ),
+                }
+            )
 
         # 如果所有外部源都失败，使用模拟数据
         if not all_items:
@@ -993,21 +1139,6 @@ class AIScraper:
         for item in all_items:
             if "id" in item and not item["id"].startswith("twitter_"):
                 self.save_hotspot(item)
-
-        # 将今天入库的 created_at 校准为内容发布时间（published_at），避免“重复旧内容但记到今天”
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            UPDATE hotspots
-            SET created_at = published_at
-            WHERE date(created_at) = date('now')
-              AND published_at IS NOT NULL
-              AND TRIM(COALESCE(published_at, '')) <> ''
-            """
-        )
-        conn.commit()
-        conn.close()
 
         # 识别机会
         opportunities = self.identify_opportunities()

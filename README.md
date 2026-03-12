@@ -71,6 +71,23 @@
 pip install flask
 ```
 
+### 2.1 配置 AI 环境变量
+在项目根目录创建 `.env`，可参考 `.env.example`：
+
+```bash
+cp .env.example .env
+```
+
+至少需要设置：
+
+```bash
+AI_API_KEY=your_real_api_key_here
+```
+
+说明：
+- 不要把真实 `AI_API_KEY` 写进代码或提交到 Git
+- `start.sh` 会自动加载根目录 `.env`
+
 ### 3. 启动系统
 ```bash
 # 方法1: 使用启动脚本（推荐）

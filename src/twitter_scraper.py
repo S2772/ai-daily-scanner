@@ -4,6 +4,7 @@ Twitter爬虫模块 - 使用Jina AI Reader提取推文内容
 收集AI领域名人、技术大拿的推文和观点
 """
 
+import os
 import requests
 import sqlite3
 import json
@@ -12,19 +13,20 @@ import re
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 import hashlib
+from .ai_config import get_ai_api_config
 
 # AI API 配置
-AI_API_CONFIG = {
-    "base_url": "https://bobdong.cn/v1/chat/completions",
-    "api_key": "sk-pkTNOMFFkTCohLxN8Fswqhr5pCbPxypDHRy8hoATEFbIO2El",
-    "model": "gpt-5.2-codex"
-}
+AI_API_CONFIG = get_ai_api_config(
+    default_model="gpt-5.2-codex",
+    default_fallback_models="gpt-5.2,gpt-4.1",
+)
 
 
 class TwitterScraper:
     def __init__(self, db_path: str = "data/ai_hotspots.db"):
         """初始化Twitter爬虫"""
-        self.db_path = db_path
+        self.db_path = self._resolve_db_path(db_path)
+        self._ensure_db_parent_dir()
         self.min_valid_content_length = 100
         self.max_fetch_attempts = 2
         self.placeholder_markers = [
@@ -71,6 +73,18 @@ class TwitterScraper:
         ]
 
         self.user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+
+    @staticmethod
+    def _resolve_db_path(db_path: str) -> str:
+        if os.path.isabs(db_path):
+            return db_path
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(project_root, db_path)
+
+    def _ensure_db_parent_dir(self) -> None:
+        parent = os.path.dirname(self.db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
 
     def generate_id(self, text: str) -> str:
         """生成唯一的ID"""
@@ -327,6 +341,8 @@ class TwitterScraper:
     def _generate_summary(self, title: str, content: str) -> str:
         """使用 AI API 生成推文摘要"""
         if not content or len(content.strip()) < 10:
+            return ""
+        if not AI_API_CONFIG.get("api_key"):
             return ""
 
         prompt = f"""请为以下Twitter推文生成一个简洁的中文摘要（30-50字），突出核心观点：

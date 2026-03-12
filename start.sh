@@ -9,6 +9,12 @@ LOG_DIR="$ROOT_DIR/logs"
 BACKEND_LOG="$LOG_DIR/backend.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 
+if [ -f "$ROOT_DIR/.env" ]; then
+  set -a
+  . "$ROOT_DIR/.env"
+  set +a
+fi
+
 mkdir -p "$LOG_DIR"
 
 is_running() {
@@ -100,6 +106,28 @@ status() {
   fi
 }
 
+ensure() {
+  local recovered=0
+
+  if ! is_running "$BACKEND_PID_FILE"; then
+    echo "Backend not running; auto-starting..."
+    start_backend
+    recovered=1
+  fi
+
+  if ! is_running "$FRONTEND_PID_FILE"; then
+    echo "Frontend not running; auto-starting..."
+    start_frontend
+    recovered=1
+  fi
+
+  if [ "$recovered" -eq 0 ]; then
+    echo "All services already running."
+  else
+    echo "Logs: $BACKEND_LOG, $FRONTEND_LOG"
+  fi
+}
+
 case "${1:-start}" in
   start)
     start_backend
@@ -117,8 +145,11 @@ case "${1:-start}" in
   status)
     status
     ;;
+  ensure)
+    ensure
+    ;;
   *)
-    echo "Usage: $0 [start|stop|restart|status]"
+    echo "Usage: $0 [start|stop|restart|status|ensure]"
     exit 1
     ;;
 esac

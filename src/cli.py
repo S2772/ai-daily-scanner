@@ -441,9 +441,13 @@ def cli():
 @cli.command()
 def collect():
     """执行每日收集任务"""
-    scraper = AIScraper()
-    count, opportunities = scraper.run_daily_collection()
-    click.echo(f"✅ 收集完成: {count}个热点, {opportunities}个机会")
+    try:
+        scraper = AIScraper()
+        count, opportunities = scraper.run_daily_collection()
+        click.echo(f"✅ 收集完成: {count}个热点, {opportunities}个机会")
+    except Exception as e:
+        click.echo(f"❌ 收集失败: {e}")
+        raise click.Abort()
 
 @cli.command()
 @click.option('--limit', default=20, help='显示数量限制')
