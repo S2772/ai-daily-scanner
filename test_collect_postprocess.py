@@ -2,6 +2,8 @@ import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
+import os
+import time
 
 import webapp
 
@@ -44,6 +46,18 @@ class CollectPostprocessTest(unittest.TestCase):
               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
               started_at TIMESTAMP,
               finished_at TIMESTAMP
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE hotspots (
+              id TEXT PRIMARY KEY,
+              title TEXT,
+              content TEXT,
+              ai_summary TEXT,
+              title_zh TEXT,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
@@ -149,6 +163,49 @@ class CollectPostprocessTest(unittest.TestCase):
 
             self.assertIsNone(result)
             mock_start.assert_not_called()
+
+    def test_regen_job_finishes_when_summary_generation_times_out(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
+            self._create_db(tmp.name)
+            conn = sqlite3.connect(tmp.name)
+            conn.execute(
+                """
+                INSERT INTO hotspots (id, title, content, ai_summary, title_zh, created_at)
+                VALUES ('h1', 'English title', 'Long enough content for summary generation.' || substr('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 1, 30), '', '', datetime('now'))
+                """
+            )
+            conn.execute(
+                "INSERT INTO regen_summaries_jobs (job_key, status, created_at, batch_limit) VALUES ('2026-03-12', 'queued', datetime('now'), 10)"
+            )
+            conn.commit()
+            conn.close()
+
+            def slow_summary(*args, **kwargs):
+                time.sleep(0.2)
+                return {"summary": "should not be stored", "title_zh": "不应写入"}
+
+            with patch.object(webapp, "DB_PATH", tmp.name), \
+                 patch.object(webapp, "generate_ai_summary", side_effect=slow_summary), \
+                 patch.object(webapp, "_translate_title_to_chinese", return_value="英文标题"), \
+                 patch.dict(os.environ, {"REGEN_SUMMARY_ITEM_TIMEOUT_SECONDS": "0.05"}, clear=False):
+                updated = webapp._regen_summaries_job("2026-03-12", batch_limit=10)
+
+            self.assertEqual(updated, 1)
+            conn = sqlite3.connect(tmp.name)
+            row = conn.execute(
+                "SELECT ai_summary, title_zh FROM hotspots WHERE id = 'h1'"
+            ).fetchone()
+            job = conn.execute(
+                "SELECT status, processed, updated, failed, finished_at FROM regen_summaries_jobs WHERE job_key = '2026-03-12'"
+            ).fetchone()
+            conn.close()
+            self.assertTrue((row[0] or "").startswith("[PENDING]"))
+            self.assertEqual(row[1], "英文标题")
+            self.assertEqual(job[0], "finished")
+            self.assertEqual(job[1], 1)
+            self.assertEqual(job[2], 1)
+            self.assertEqual(job[3], 0)
+            self.assertTrue((job[4] or "").strip())
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import queue
 import re
 import shutil
 import sqlite3
@@ -395,6 +396,51 @@ JSON schema: {{\"summary\": string(150-220字简体中文摘要), \"title_zh\": 
 
     marker = f"[PENDING] AI摘要生成失败({last_error or 'unknown'}), 稍后自动重试"
     return {"summary": marker, "title_zh": fallback_title}
+
+
+def _generate_ai_summary_with_timeout(text: str, title: str = "", timeout_seconds: Optional[float] = None) -> Dict[str, str]:
+    timeout_value = timeout_seconds
+    if timeout_value is None:
+        try:
+            timeout_value = float((os.getenv("REGEN_SUMMARY_ITEM_TIMEOUT_SECONDS", "") or "").strip() or 45)
+        except Exception:
+            timeout_value = 45.0
+    timeout_value = max(0.05, float(timeout_value))
+
+    result_box: "queue.Queue[Tuple[str, Any]]" = queue.Queue(maxsize=1)
+
+    def _worker() -> None:
+        try:
+            result_box.put(("ok", generate_ai_summary(text, title)))
+        except Exception as exc:
+            result_box.put(("err", exc))
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join(timeout_value)
+
+    if t.is_alive():
+        fallback_title = _translate_title_to_chinese(title)
+        return {
+            "summary": f"[PENDING] AI摘要生成超时({int(timeout_value)}s), 稍后自动重试",
+            "title_zh": fallback_title,
+        }
+
+    if result_box.empty():
+        fallback_title = _translate_title_to_chinese(title)
+        return {
+            "summary": "[PENDING] AI摘要生成失败(worker_exit_without_result), 稍后自动重试",
+            "title_zh": fallback_title,
+        }
+
+    state, payload = result_box.get_nowait()
+    if state == "err":
+        fallback_title = _translate_title_to_chinese(title)
+        return {
+            "summary": f"[PENDING] AI摘要生成失败({payload}), 稍后自动重试",
+            "title_zh": fallback_title,
+        }
+    return payload
 
 
 def init_sources_meta_table(conn: sqlite3.Connection) -> None:
@@ -2384,7 +2430,7 @@ def _regen_summaries_job(job_key: str, batch_limit: int = 40) -> int:
 
         summary_input = content if len(content) > 20 else title
         if needs_summary and summary_input:
-            result = generate_ai_summary(summary_input, title)
+            result = _generate_ai_summary_with_timeout(summary_input, title)
             summary_text = result.get("summary", summary_text)
             title_zh = result.get("title_zh", title_zh)
 
@@ -2476,7 +2522,7 @@ def _regen_summaries_worker(job_key: str, batch_limit: int, worker_index: int, w
         summary_input = content if len(content) > 20 else title
         if needs_summary and summary_input:
             try:
-                result = generate_ai_summary(summary_input, title)
+                result = _generate_ai_summary_with_timeout(summary_input, title)
                 summary_text = result.get("summary", summary_text)
                 title_zh = result.get("title_zh", title_zh)
             except Exception:
