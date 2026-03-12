@@ -5,40 +5,26 @@ import { NewsDetail } from './NewsDetail';
 import { PaginationControls } from './PaginationControls';
 import { DataStatusPanel } from './DataStatusPanel';
 import { Bookmark, Upload, Link as LinkIcon, Plus, FileText, X } from 'lucide-react';
-import { fetchHotspots, fetchSourceStatus, Hotspot } from '../api';
+import { fetchSavedItems, fetchSourceStatus, SavedItem } from '../api';
+import { SavedEditorModal } from './SavedEditorModal';
 import { createNoDataHint, createRequestErrorHint, DataStatusHint } from '../dataStatus';
 import { inferSourceGroup } from '../sourceGrouping';
 import { controlUi, pageUi } from './designSystem';
 
-function hotspotToNewsItem(h: Hotspot): NewsItem {
-  const titleZh = (h.title_zh || '').trim();
-  const titleFallbackPlaceholder = titleZh === '外文标题（请查看原文）';
-  const displayTitle = titleZh && !titleFallbackPlaceholder ? titleZh : h.title;
-
-  const rawContent = (h.content || '').trim();
-  const rawSummary = (h.ai_summary || '').trim();
-  const contentLooksBroken = /the media could not be played|temporarily unavailable|access denied|unsupported browser/i.test(rawContent);
-  let displaySummary = rawSummary;
-  if (!displaySummary || displaySummary.includes('AI摘要服务暂时繁忙') || displaySummary.includes('内容太短，无法生成摘要')) {
-    displaySummary = rawContent ? rawContent.slice(0, 240) : '';
-  }
-  if (contentLooksBroken) {
-    displaySummary = '该条内容抓取失败（源站返回错误文案），请稍后重试抓取或检查数据源配置。';
-  }
-
+function savedItemToNewsItem(item: SavedItem): NewsItem {
   return {
-    id: h.id,
-    title: displayTitle,
-    source: h.source,
-    sourcePlatform: inferSourceGroup(h.source),
-    sourceType: h.category || 'General',
-    score: h.total_score || 0,
-    summary: displaySummary,
-    ai_summary: h.ai_summary,
-    content: h.content,
-    url: h.url,
-    tags: (h.tags || []).map((t, i) => ({ id: `${h.id}-t${i}`, name: t, type: 'ai' as const })),
-    timestamp: h.created_at,
+    id: item.id,
+    title: item.title,
+    source: item.source_name || 'Saved',
+    sourcePlatform: inferSourceGroup(item.source_name || 'Saved'),
+    sourceType: `Saved/${item.status || 'new'}`,
+    score: 0,
+    summary: item.note || '',
+    ai_summary: '',
+    content: '',
+    url: item.url,
+    tags: [{ id: `${item.id}-status`, name: item.status || 'new', type: 'manual' }],
+    timestamp: item.created_at,
   };
 }
 
@@ -52,18 +38,18 @@ export function Saved() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [emptyStatus, setEmptyStatus] = useState<DataStatusHint | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<SavedItem | null>(null);
 
-  useEffect(() => {
+  const reload = () => {
     setLoading(true);
     setEmptyStatus(null);
-    fetchHotspots(undefined, 50)
-      .then(({ hotspots }) => {
-        const topItems = hotspots
-          .filter(h => (h.total_score || 0) >= 7)
-          .slice(0, 12)
-          .map(hotspotToNewsItem);
-        setSavedItems(topItems);
-        if (topItems.length === 0) {
+    fetchSavedItems(200, 0, statusFilter || undefined)
+      .then(({ items }) => {
+        const mapped = (items || []).map(savedItemToNewsItem);
+        setSavedItems(mapped);
+        if (mapped.length === 0) {
           fetchSourceStatus()
             .then(statuses => setEmptyStatus(createNoDataHint(statuses)))
             .catch(error => setEmptyStatus(createRequestErrorHint(error, 'Saved 数据状态检测失败')))
@@ -71,12 +57,18 @@ export function Saved() {
           return;
         }
         setLoading(false);
-      }).catch((error) => {
+      })
+      .catch((error) => {
         setSavedItems([]);
         setEmptyStatus(createRequestErrorHint(error, 'Saved 数据加载失败'));
         setLoading(false);
       });
-  }, []);
+  };
+
+  useEffect(() => {
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter]);
 
   const handleImport = () => {
     if (!importValue.trim()) return;
@@ -128,15 +120,41 @@ export function Saved() {
             <Bookmark className="w-5 h-5 text-purple-600" />
             Saved Content
           </h1>
-          <p className={pageUi.pageSubtitle}>High-score insights (7+) from today's collection.</p>
+          <p className={pageUi.pageSubtitle}>人工保存</p>
         </div>
-        <button
-          onClick={() => setIsImportModalOpen(true)}
-          className={controlUi.darkButton}
-        >
-          <Plus className="w-3.5 h-3.5" />
-          Import Content
-        </button>
+
+        <div className="flex items-center gap-2">
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="h-9 rounded-md border border-gray-200 bg-white px-2 text-xs text-gray-700"
+          >
+            <option value="">All</option>
+            <option value="new">New</option>
+            <option value="reading">Reading</option>
+            <option value="done">Done</option>
+            <option value="archived">Archived</option>
+          </select>
+
+          <button
+            onClick={() => {
+              setEditingItem(null);
+              setIsEditorOpen(true);
+            }}
+            className={controlUi.darkButton}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add
+          </button>
+
+          <button
+            onClick={() => setIsImportModalOpen(true)}
+            className={controlUi.darkButton}
+          >
+            <Upload className="w-3.5 h-3.5" />
+            Import
+          </button>
+        </div>
       </div>
 
       {loading ? (
@@ -146,12 +164,34 @@ export function Saved() {
       ) : (
         <div className="flex flex-col gap-4">
           {pageItems.map(item => (
-            <NewsCard
-              key={item.id}
-              item={item}
-              onClick={setSelectedNews}
-              isSelected={selectedNews?.id === item.id}
-            />
+            <div key={item.id} className="relative">
+              <NewsCard
+                item={item}
+                onClick={setSelectedNews}
+                isSelected={selectedNews?.id === item.id}
+              />
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditingItem({
+                    id: item.id,
+                    hotspot_id: null,
+                    title: item.title,
+                    url: item.url,
+                    source_name: item.source,
+                    origin_type: 'url',
+                    status: String(item.tags?.[0]?.name || 'new'),
+                    note: item.summary || '',
+                    created_at: item.timestamp,
+                    updated_at: item.timestamp,
+                  });
+                  setIsEditorOpen(true);
+                }}
+                className="absolute top-3 right-3 text-xs px-2 py-1 rounded bg-white/90 border border-gray-200 hover:bg-white"
+              >
+                Edit
+              </button>
+            </div>
           ))}
           <PaginationControls
             totalItems={savedItems.length}
@@ -162,6 +202,13 @@ export function Saved() {
           />
         </div>
       )}
+
+      <SavedEditorModal
+        item={editingItem}
+        isOpen={isEditorOpen}
+        onClose={() => setIsEditorOpen(false)}
+        onSaved={() => reload()}
+      />
 
       {isImportModalOpen && (
         <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">

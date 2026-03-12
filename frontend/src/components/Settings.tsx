@@ -1,10 +1,19 @@
-import React, { useState } from 'react';
-import { 
-  Twitter, MessageCircle, Globe, Plus, X, 
-  Settings2, Bot, Zap, Bell, Mail, Webhook, 
+import React, { useEffect, useState } from 'react';
+import {
+  Twitter, MessageCircle, Globe, Plus, X,
+  Settings2, Bot, Zap, Bell, Mail, Webhook,
   CheckCircle2, AlertCircle, Link2, Link2Off,
   ChevronDown
 } from 'lucide-react';
+import { fetchSettings, updateSettings } from '../api';
+
+type SchedulerInfo = {
+  enabled: boolean;
+  hour: number;
+  last_run_id: number | null;
+  last_triggered_at: string | null;
+  next_trigger_at: string | null;
+};
 
 export function Settings() {
   const [activeTab, setActiveTab] = useState('sources');
@@ -39,6 +48,50 @@ export function Settings() {
   const [schedule, setSchedule] = useState('6h');
   const [email, setEmail] = useState('founder@startup.com');
   const [webhook, setWebhook] = useState('https://hooks.slack.com/services/T0000/B0000/XXXX');
+
+  // Daily collect schedule (real backend setting)
+  const [dailyCollectEnabled, setDailyCollectEnabled] = useState(true);
+  const [dailyCollectHour, setDailyCollectHour] = useState(10);
+  const [schedulerInfo, setSchedulerInfo] = useState<SchedulerInfo | null>(null);
+  const [savingAutomation, setSavingAutomation] = useState(false);
+  const [automationMessage, setAutomationMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchSettings()
+      .then((data: any) => {
+        if (cancelled) return;
+        if (typeof data.daily_collect_enabled === 'boolean') setDailyCollectEnabled(data.daily_collect_enabled);
+        if (typeof data.daily_deadline_hour === 'number') setDailyCollectHour(data.daily_deadline_hour);
+        if (data.scheduler) setSchedulerInfo(data.scheduler as SchedulerInfo);
+      })
+      .catch(() => {
+        // keep defaults
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const saveAutomation = async () => {
+    setSavingAutomation(true);
+    setAutomationMessage(null);
+    try {
+      const res: any = await updateSettings({ daily_deadline_hour: dailyCollectHour, daily_collect_enabled: dailyCollectEnabled });
+      if (res && res.ok) {
+        setAutomationMessage('Saved. Schedule takes effect immediately.');
+        // refresh scheduler info
+        const fresh: any = await fetchSettings();
+        if (fresh && fresh.scheduler) setSchedulerInfo(fresh.scheduler as SchedulerInfo);
+      } else {
+        setAutomationMessage('Save failed.');
+      }
+    } catch (e: any) {
+      setAutomationMessage(`Save failed: ${String(e?.message || e)}`);
+    } finally {
+      setSavingAutomation(false);
+    }
+  };
 
   const handleAddCreator = (e: React.FormEvent) => {
     e.preventDefault();
@@ -149,7 +202,7 @@ export function Settings() {
 
         {/* TAB 2: AI Engine */}
         {activeTab === 'engine' && (
-          <div className="space-y-8 max-w-2xl">
+          <div className="space-y-8 max-w-4xl">
             <section className="bg-white border border-[#EAEAEA] rounded-xl p-6 space-y-6">
               <div>
                 <label className="block text-sm font-semibold text-gray-900 mb-1.5">LLM Provider</label>
@@ -211,36 +264,75 @@ export function Settings() {
 
         {/* TAB 3: Automation */}
         {activeTab === 'automation' && (
-          <div className="space-y-8 max-w-2xl">
+          <div className="space-y-8 max-w-4xl">
             <section className="bg-white border border-[#EAEAEA] rounded-xl p-6 space-y-6">
-              <div>
-                <label className="block text-sm font-semibold text-gray-900 mb-1.5">Execution Schedule</label>
-                <p className="text-xs text-gray-500 mb-4">How often should the AI engine run analysis on new data?</p>
-                <div className="space-y-3">
-                  {[
-                    { id: '1h', label: 'Every hour (Real-time)' },
-                    { id: '6h', label: 'Every 6 hours' },
-                    { id: 'daily', label: 'Daily at 08:00 AM' }
-                  ].map(option => (
-                    <label key={option.id} className="flex items-center gap-3 cursor-pointer group">
-                      <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-colors ${
-                        schedule === option.id ? 'border-purple-600' : 'border-gray-300 group-hover:border-purple-400'
-                      }`}>
-                        {schedule === option.id && <div className="w-2 h-2 rounded-full bg-purple-600" />}
-                      </div>
-                      <input 
-                        type="radio" 
-                        name="schedule" 
-                        value={option.id}
-                        checked={schedule === option.id}
-                        onChange={(e) => setSchedule(e.target.value)}
-                        className="hidden"
-                      />
-                      <span className="text-sm text-gray-700">{option.label}</span>
-                    </label>
-                  ))}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-900 mb-1">Daily Collection</label>
+                    <p className="text-xs text-gray-500">Run daily data collection automatically at a fixed hour.</p>
+                  </div>
+                  {schedulerInfo?.next_trigger_at && (
+                    <div className="text-right">
+                      <div className="text-[11px] text-gray-500">Next trigger</div>
+                      <div className="text-xs font-medium text-gray-900">{schedulerInfo.next_trigger_at}</div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
+                  <div>
+                    <div className="text-[11px] text-gray-500">Enabled</div>
+                    <div className="text-xs font-medium text-gray-900">{dailyCollectEnabled ? 'Yes' : 'No'}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-gray-500">Last trigger</div>
+                    <div className="text-xs font-medium text-gray-900">{schedulerInfo?.last_triggered_at || '-'}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-gray-500">Last run id</div>
+                    <div className="text-xs font-medium text-gray-900">{schedulerInfo?.last_run_id ?? '-'}</div>
+                  </div>
                 </div>
               </div>
+
+              <div className="flex items-center justify-between gap-4 bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
+                <div className="space-y-0.5">
+                  <div className="text-sm font-medium text-gray-900">Enable daily collect</div>
+                  <div className="text-xs text-gray-500">When enabled, a collect run will start every day.</div>
+                </div>
+                <button
+                    type="button"
+                    onClick={() => setDailyCollectEnabled(!dailyCollectEnabled)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      dailyCollectEnabled ? 'bg-purple-600' : 'bg-gray-300'
+                    }`}
+                    aria-pressed={dailyCollectEnabled}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                        dailyCollectEnabled ? 'translate-x-5' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+              <div className="mt-4">
+                <label className="block text-xs font-medium text-gray-700 mb-1.5">Daily trigger hour (0-23)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={23}
+                    value={dailyCollectHour}
+                    onChange={(e) => setDailyCollectHour(Math.max(0, Math.min(23, Number(e.target.value))))}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
+                  />
+                  <div className="text-[11px] text-gray-500 mt-2">Example: 10 means 10:00 every day (local time).</div>
+                </div>
+
+              {automationMessage && (
+                <div className="mt-3 text-xs text-gray-600">{automationMessage}</div>
+              )}
 
               <div className="pt-6 border-t border-gray-100">
                 <label className="block text-sm font-semibold text-gray-900 mb-1.5">Delivery Notifications</label>
@@ -275,9 +367,16 @@ export function Settings() {
                 </div>
               </div>
 
-              <div className="pt-4 flex justify-end">
-                <button className="px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-md hover:bg-purple-700 shadow-sm">
-                  Save Automation Settings
+              <div className="pt-4 flex items-center justify-between">
+                <div className="text-[11px] text-gray-500">Only daily collect is wired to backend for now.</div>
+                <button
+                  onClick={saveAutomation}
+                  disabled={savingAutomation}
+                  className={`px-4 py-2 text-white text-sm font-medium rounded-md shadow-sm ${
+                    savingAutomation ? 'bg-purple-400 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700'
+                  }`}
+                >
+                  {savingAutomation ? 'Saving...' : 'Save Daily Schedule'}
                 </button>
               </div>
             </section>

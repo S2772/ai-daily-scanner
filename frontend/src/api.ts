@@ -81,6 +81,21 @@ export interface TrendData {
   total_sources: number;
 }
 
+export interface LogDailyBreakdownRow {
+  date: string;
+  count: number;
+}
+
+export interface LogDailySummary {
+  date_field: 'created_at' | 'published_at';
+  date?: string;
+  start_date?: string;
+  end_date?: string;
+  all_time?: string;
+  total: number;
+  breakdown: LogDailyBreakdownRow[];
+}
+
 export interface HotspotSourceGroup {
   source: string;
   count: number;
@@ -91,6 +106,7 @@ export interface DateFilter {
   startDate?: string;
   endDate?: string;
   allTime?: boolean;
+  dateField?: 'created_at' | 'published_at';
 }
 
 async function requestJson(url: string, init?: RequestInit): Promise<any> {
@@ -154,6 +170,9 @@ function buildDateParams(dateOrFilter?: string | DateFilter): URLSearchParams {
     return params;
   }
   if (dateOrFilter) {
+    if (dateOrFilter.dateField) {
+      params.set('date_field', dateOrFilter.dateField);
+    }
     if (dateOrFilter.allTime) {
       params.set('all_time', '1');
       return params;
@@ -179,9 +198,13 @@ export async function fetchHotspots(
   dateOrFilter?: string | DateFilter,
   limit = 50,
   fillMissing = true,
+  offset = 0,
 ): Promise<{ hotspots: Hotspot[]; date: string }> {
   const params = buildDateParams(dateOrFilter);
   params.set('limit', String(limit));
+  if (offset) {
+    params.set('offset', String(offset));
+  }
   if (fillMissing) {
     params.set('fill_missing', '1');
   }
@@ -193,6 +216,34 @@ export async function fetchHotspotSourceGroups(dateOrFilter?: string | DateFilte
   const params = buildDateParams(dateOrFilter);
   const data = await requestJson(`/api/hotspots-source-groups?${params.toString()}`);
   return data.sources || [];
+}
+
+export async function fetchWeChatLatest(params: {
+  limit?: number;
+  offset?: number;
+  startDate?: string;
+  endDate?: string;
+  blogger?: string;
+  category?: string;
+  tag?: string;
+  q?: string;
+}): Promise<{ items: Hotspot[]; total: number; limit: number; offset: number }> {
+  const sp = new URLSearchParams();
+  if (params.limit) sp.set('limit', String(params.limit));
+  if (params.offset) sp.set('offset', String(params.offset));
+  if (params.startDate) sp.set('start_date', params.startDate);
+  if (params.endDate) sp.set('end_date', params.endDate);
+  if (params.blogger) sp.set('blogger', params.blogger);
+  if (params.category) sp.set('category', params.category);
+  if (params.tag) sp.set('tag', params.tag);
+  if (params.q) sp.set('q', params.q);
+  const data = await requestJson(`/api/wechat-latest?${sp.toString()}`);
+  return {
+    items: data.items || [],
+    total: data.total || 0,
+    limit: data.limit || params.limit || 20,
+    offset: data.offset || params.offset || 0,
+  };
 }
 
 export async function fetchHotspotDetail(id: string): Promise<Hotspot | null> {
@@ -232,6 +283,11 @@ export async function fetchTrend(days = 30): Promise<TrendData> {
   return requestJson(`/api/trend?days=${days}`);
 }
 
+export async function fetchLogDaily(dateOrFilter?: string | DateFilter): Promise<LogDailySummary> {
+  const params = buildDateParams(dateOrFilter);
+  return requestJson(`/api/log-daily?${params.toString()}`);
+}
+
 export type CollectRun = {
   id: number;
   started_at: string;
@@ -265,7 +321,7 @@ export async function fetchLatestDate(): Promise<string> {
   return data.latest_date || today();
 }
 
-export async function triggerCollect(): Promise<{ ok: boolean; hotspots_count: number; opportunities_count: number; collected_at: string }> {
+export async function triggerCollect(): Promise<{ ok: boolean; run_id: number; status: string }> {
   return requestJson('/api/collect', { method: 'POST' });
 }
 
@@ -295,4 +351,71 @@ export async function updateSource(id: string, tags: string[], status: string, n
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tags, status, notes }),
   });
+}
+
+export async function fetchSettings(): Promise<{ ok: boolean; daily_deadline_hour: number; daily_collect_enabled: boolean }> {
+  return requestJson('/api/settings');
+}
+
+export async function updateSettings(payload: { daily_deadline_hour: number; daily_collect_enabled: boolean }): Promise<{ ok: boolean; daily_deadline_hour: number; daily_collect_enabled: boolean }> {
+  return requestJson('/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export type SavedItem = {
+  id: string;
+  hotspot_id: string | null;
+  title: string;
+  url: string;
+  source_name: string;
+  origin_type: 'hotspot' | 'url';
+  status: string;
+  note: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function fetchSavedItems(limit = 50, offset = 0, status?: string): Promise<{ items: SavedItem[]; total: number; limit: number; offset: number }> {
+  const params = new URLSearchParams();
+  params.set('limit', String(limit));
+  if (offset) params.set('offset', String(offset));
+  if (status) params.set('status', status);
+  return requestJson(`/api/saved?${params.toString()}`);
+}
+
+export async function createSavedItem(payload: {
+  origin_type: 'hotspot' | 'url';
+  hotspot_id?: string;
+  title?: string;
+  url?: string;
+  source_name?: string;
+  status?: string;
+  note?: string;
+}): Promise<{ ok: boolean; id: string }> {
+  return requestJson('/api/saved', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateSavedItem(id: string, payload: {
+  status?: string;
+  note?: string;
+  title?: string;
+  url?: string;
+  source_name?: string;
+}): Promise<{ ok: boolean; id: string }> {
+  return requestJson(`/api/saved/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchSavedStatusOptions(): Promise<{ ok: boolean; options: Array<{ value: string; label: string }> }> {
+  return requestJson('/api/saved-status');
 }

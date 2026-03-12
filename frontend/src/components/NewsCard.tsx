@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NewsItem } from '../types';
-import { Star, ArrowRight, Twitter, MessageCircle, Globe, Mic, Newspaper, Github, FileText, ExternalLink } from 'lucide-react';
+import { Star, ArrowRight, Twitter, MessageCircle, Globe, Mic, Newspaper, Github, FileText, ExternalLink, Bookmark } from 'lucide-react';
 import { getTopicTagClass } from '../topicColors';
 import { cardUi } from './designSystem';
 
@@ -10,6 +10,8 @@ interface NewsCardProps {
   onClick: (item: NewsItem) => void;
   isSelected?: boolean;
   isCompact?: boolean;
+  onSave?: (item: NewsItem) => void;
+  isSaved?: boolean;
 }
 
 const getSourceIcon = (platform: string) => {
@@ -29,7 +31,7 @@ const getSourceIcon = (platform: string) => {
   }
 };
 
-export function NewsCard({ item, onClick, isSelected, isCompact }: NewsCardProps) {
+export function NewsCard({ item, onClick, isSelected, isCompact, onSave, isSaved }: NewsCardProps) {
   const [isRead, setIsRead] = useState(false);
   const primaryTopic = (item.sourceType || '').trim() && item.sourceType !== 'General'
     ? item.sourceType
@@ -51,6 +53,23 @@ export function NewsCard({ item, onClick, isSelected, isCompact }: NewsCardProps
       } ${isRead && !isSelected ? 'opacity-80' : ''} ${isCompact ? 'p-4' : ''}`}
     >
       <div className="flex justify-between items-start">
+        {onSave && !isCompact && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onSave(item);
+            }}
+            className={`absolute right-3 top-3 inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium shadow-sm transition-all opacity-0 group-hover:opacity-100 ${
+              isSaved
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+            }`}
+            title="Save"
+          >
+            <Bookmark className={`h-3.5 w-3.5 ${isSaved ? 'fill-current' : ''}`} />
+            {isSaved ? 'Saved' : 'Save'}
+          </button>
+        )}
         <div className="flex flex-wrap items-center gap-2 pr-4 text-xs font-medium text-gray-500">
           <div className={`flex h-6 w-6 items-center justify-center rounded-full ${isSelected ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-500'}`}>
             {getSourceIcon(item.sourcePlatform)}

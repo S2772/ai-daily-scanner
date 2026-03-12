@@ -4,12 +4,14 @@ import { NewsDetail } from './NewsDetail';
 import { NewsItem } from '../types';
 import { Search, RefreshCw } from 'lucide-react';
 import { DateScopeDropdown } from './DateScopeDropdown';
+import { DateFieldToggle } from './DateFieldToggle';
 import { PaginationControls } from './PaginationControls';
 import { DataStatusPanel } from './DataStatusPanel';
-import { fetchHotspots, fetchSourceStatus, DateFilter, Hotspot } from '../api';
+import { createSavedItem, fetchHotspots, fetchSourceStatus, fetchSummaryStats, DateFilter, Hotspot, SummaryStats } from '../api';
 import { createNoDataHint, createRequestErrorHint, DataStatusHint } from '../dataStatus';
 import { inferSourceGroup } from '../sourceGrouping';
 import { controlUi, pageUi } from './designSystem';
+import { useAppState } from '../appState';
 
 function hotspotToNewsItem(h: Hotspot): NewsItem {
   const titleZh = (h.title_zh || '').trim();
@@ -22,8 +24,9 @@ function hotspotToNewsItem(h: Hotspot): NewsItem {
   const rawSummary = (h.ai_summary || '').trim();
   const contentLooksBroken = /the media could not be played|temporarily unavailable|access denied|unsupported browser/i.test(rawContent);
   let displaySummary = rawSummary;
-  if (!displaySummary || displaySummary.includes('AI摘要服务暂时繁忙') || displaySummary.includes('内容太短，无法生成摘要')) {
-    displaySummary = rawContent ? rawContent.slice(0, 240) : '';
+  const looksLikeRawExcerpt = displaySummary && rawContent && displaySummary.slice(0, 120) === rawContent.slice(0, 120);
+  if (!displaySummary || displaySummary.includes('AI摘要服务暂时繁忙') || displaySummary.includes('内容太短，无法生成摘要') || looksLikeRawExcerpt) {
+    displaySummary = 'AI summary is being generated. Please refresh in a moment.';
   }
   if (contentLooksBroken) {
     displaySummary = '该条内容抓取失败（源站返回错误文案），请稍后重试抓取或检查数据源配置。';
@@ -69,30 +72,43 @@ interface NewsFeedProps {
 export function NewsFeed({ selectedHotspotId, onClearSelection }: NewsFeedProps) {
   const now = new Date();
   const currentDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const { dateScopeLabel, dateScopeFilter, setDateScope, applyGlobalFilters } = useAppState();
   const [selectedItem, setSelectedItem] = useState<NewsItem | null>(null);
+  const [summaryStats, setSummaryStats] = useState<SummaryStats | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSource, setActiveSource] = useState('All');
   const [activeTopic, setActiveTopic] = useState('All');
   const [allItems, setAllItems] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [timeRange, setTimeRange] = useState('Today');
-  const [dateFilter, setDateFilter] = useState<DateFilter>({ date: currentDate });
+  const [timeRange, setTimeRange] = useState(dateScopeLabel);
+  const [dateFilter, setDateFilter] = useState<DateFilter>(() => dateScopeFilter);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [emptyStatus, setEmptyStatus] = useState<DataStatusHint | null>(null);
+  const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
 
   const loadHotspots = async (filter: DateFilter) => {
+    const effectiveFilter = applyGlobalFilters(filter);
     setLoading(true);
     setEmptyStatus(null);
     try {
-      const { hotspots } = await fetchHotspots(filter, 200, false);
-      const items = hotspots.map(hotspotToNewsItem);
+      const [hsRes, summary] = await Promise.all([
+        // Fetch enough for filtering + display; allow backend to fill missing summaries.
+        fetchHotspots(effectiveFilter, 80, true, 0),
+        fetchSummaryStats(effectiveFilter),
+      ]);
+      setSummaryStats(summary);
+      const items = (hsRes.hotspots || [])
+        .filter((h) => !(h.source || '').startsWith('http://localhost:4000/feeds/MP_WXS_'))
+        .map(hotspotToNewsItem);
       setAllItems(items);
-      if (hotspots.length === 0) {
-        const statuses = await fetchSourceStatus(filter);
+      if ((hsRes.hotspots || []).length === 0) {
+        const statuses = await fetchSourceStatus(effectiveFilter);
         setEmptyStatus(createNoDataHint(statuses));
       }
     } catch (error) {
+      setSummaryStats(null);
       setAllItems([]);
       setActiveSource('All');
       setActiveTopic('All');
@@ -103,8 +119,10 @@ export function NewsFeed({ selectedHotspotId, onClearSelection }: NewsFeedProps)
   };
 
   useEffect(() => {
-    loadHotspots(dateFilter);
-  }, []);
+    const effectiveFilter = applyGlobalFilters(dateFilter);
+    setDateFilter(effectiveFilter);
+    loadHotspots(effectiveFilter);
+  }, [dateFilter.date, dateFilter.startDate, dateFilter.endDate, dateFilter.allTime, applyGlobalFilters]);
 
   // Auto-select item when selectedHotspotId is provided
   useEffect(() => {
@@ -118,7 +136,25 @@ export function NewsFeed({ selectedHotspotId, onClearSelection }: NewsFeedProps)
   }, [selectedHotspotId, allItems]);
 
   const handleRefresh = () => {
-    loadHotspots(dateFilter);
+    const effectiveFilter = applyGlobalFilters(dateFilter);
+    setDateFilter(effectiveFilter);
+    loadHotspots(effectiveFilter);
+  };
+
+  const handleQuickSave = async (item: NewsItem) => {
+    if (savingIds.has(item.id) || savedIds.has(item.id)) return;
+    setSavingIds(prev => new Set([...prev, item.id]));
+    try {
+      await createSavedItem({ origin_type: 'hotspot', hotspot_id: item.id, status: 'new' });
+      setSavedIds(prev => new Set([...prev, item.id]));
+    } catch {
+      // ignore for now
+    }
+    setSavingIds(prev => {
+      const next = new Set(prev);
+      next.delete(item.id);
+      return next;
+    });
   };
 
   const sourceFilters = useMemo(() => {
@@ -162,6 +198,10 @@ export function NewsFeed({ selectedHotspotId, onClearSelection }: NewsFeedProps)
     const matchesTopic = activeTopic === 'All' || item.sourceType === activeTopic;
     return matchesSearch && matchesSource && matchesTopic;
   });
+
+  const totalNewsCount = summaryStats?.hotspot_count;
+  const totalNewsLabel = typeof totalNewsCount === 'number' ? totalNewsCount : allItems.length;
+  // Use backend summary count for the "All" chip; list data may be paged/limited.
   const totalPages = Math.max(1, Math.ceil(filteredNews.length / pageSize));
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const pageStart = (safeCurrentPage - 1) * pageSize;
@@ -187,14 +227,18 @@ export function NewsFeed({ selectedHotspotId, onClearSelection }: NewsFeedProps)
               <h1 className={pageUi.pageTitle}>News</h1>
               <p className={pageUi.pageSubtitle}>AI-filtered high-value news from across the web.</p>
             </div>
-            <DateScopeDropdown
-              label={timeRange}
-              onChange={(label, filter) => {
-                setTimeRange(label);
-                setDateFilter(filter);
-                loadHotspots(filter);
-              }}
-            />
+            <div className="flex items-center gap-2">
+              <DateFieldToggle />
+              <DateScopeDropdown
+                label={timeRange}
+                onChange={(label, filter) => {
+                  setTimeRange(label);
+                  setDateFilter(filter);
+                  setDateScope(label, filter);
+                  loadHotspots(filter);
+                }}
+              />
+            </div>
           </div>
 
           <div className="shrink-0 mb-6 flex gap-3">
@@ -229,7 +273,7 @@ export function NewsFeed({ selectedHotspotId, onClearSelection }: NewsFeedProps)
                     : controlUi.chipInactive
                 }`}
               >
-                All ({allItems.length})
+                All ({totalNewsLabel})
               </button>
               {sourceFilters.map(source => (
                 <button
@@ -254,7 +298,7 @@ export function NewsFeed({ selectedHotspotId, onClearSelection }: NewsFeedProps)
                 onClick={() => setActiveTopic('All')}
                 className={activeTopic === 'All' ? controlUi.chipActive : controlUi.chipInactive}
               >
-                All ({allItems.length})
+                All ({totalNewsLabel})
               </button>
               {topicFilters.map(tag => (
                 <button
@@ -284,6 +328,8 @@ export function NewsFeed({ selectedHotspotId, onClearSelection }: NewsFeedProps)
                   item={item}
                   onClick={setSelectedItem}
                   isSelected={selectedItem?.id === item.id}
+                  onSave={handleQuickSave}
+                  isSaved={savedIds.has(item.id) || savingIds.has(item.id)}
                 />
               ))}
               <PaginationControls

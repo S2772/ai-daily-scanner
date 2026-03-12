@@ -10,6 +10,7 @@ export function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
   const navItems = [
     { id: 'overview', label: 'Overview', icon: BarChart2 },
     { id: 'feed', label: 'News', icon: LayoutList },
+    { id: 'wechat', label: 'WeChat', icon: LayoutList },
     { id: 'discover', label: 'Opportunity', icon: Compass },
     { id: 'saved', label: 'Saved', icon: Bookmark },
     { id: 'notes', label: 'Insight', icon: BookOpen },

@@ -4,6 +4,7 @@ import { NewsCard } from './NewsCard';
 import { PaginationControls } from './PaginationControls';
 import { NewsItem } from '../types';
 import { inferSourceGroup } from '../sourceGrouping';
+import { controlUi } from './designSystem';
 
 type WeChatItem = Hotspot;
 

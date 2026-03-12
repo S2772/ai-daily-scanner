@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { NewsItem } from '../types';
 import { ExternalLink, Sparkles, Save, ArrowLeft, CheckCircle2, FileText, Lightbulb, ArrowRight } from 'lucide-react';
-import { addNote } from '../api';
+import { addNote, createSavedItem } from '../api';
 import { cardUi, controlUi } from './designSystem';
 
 interface NewsDetailProps {
@@ -53,6 +53,7 @@ export function NewsDetail({ item, onBack, allItems = [], onSelectItem }: NewsDe
   const [annotation, setAnnotation] = useState(item.annotations || '');
   const [isSaving, setIsSaving] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
+  const [savedMsg, setSavedMsg] = useState('');
   const [showFullArticle, setShowFullArticle] = useState(false);
   const aiSummary = (item.ai_summary || '').trim();
   const originalContent = (item.content || '').trim();
@@ -102,15 +103,20 @@ export function NewsDetail({ item, onBack, allItems = [], onSelectItem }: NewsDe
   };
 
   const handleSave = async () => {
-    if (!annotation.trim()) return;
     setIsSaving(true);
+    setSavedMsg('');
     try {
-      await addNote(item.id, annotation);
+      await createSavedItem({
+        origin_type: 'hotspot',
+        hotspot_id: item.id,
+        status: 'new',
+        note: annotation.trim(),
+      });
       setIsSaved(true);
-      setAnnotation('');
-      setTimeout(() => setIsSaved(false), 3000);
-    } catch {
-      // ignore
+      setSavedMsg('Saved');
+      setTimeout(() => setIsSaved(false), 2500);
+    } catch (error: any) {
+      setSavedMsg(`Save failed${error?.message ? `: ${error.message}` : ''}`);
     }
     setIsSaving(false);
   };
@@ -183,7 +189,7 @@ export function NewsDetail({ item, onBack, allItems = [], onSelectItem }: NewsDe
 
           <div className={cardUi.base}>
             <div className="mb-3 text-sm font-semibold text-gray-900">Original Content</div>
-            <p className="text-gray-700 text-sm leading-loose whitespace-pre-line">
+            <p className="text-gray-700 text-sm leading-loose whitespace-pre-wrap">
               {originalContent
                 ? showFullArticle || !hasLongArticle
                   ? originalContent
@@ -251,8 +257,13 @@ export function NewsDetail({ item, onBack, allItems = [], onSelectItem }: NewsDe
               className="w-full h-32 p-4 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 resize-none transition-all"
             />
             <p className="text-xs text-gray-500 mt-2">
-              Notes saved here will appear in your Insight list, linked to this News item.
+              Saved items appear in the Saved list, linked to this News item.
             </p>
+            {savedMsg && (
+              <div className={`mt-2 text-xs ${savedMsg.startsWith('Save failed') ? 'text-red-600' : 'text-emerald-600'} font-medium`}>
+                {savedMsg}
+              </div>
+            )}
           </div>
         </div>
       </div>
