@@ -2,12 +2,14 @@
 
 const TAG_COLORS = ['blue', 'purple', 'pink', 'green', 'orange', 'red', 'cyan', 'yellow'];
 let currentDate = new Date().toISOString().split('T')[0];
+let currentDateField = 'published'; // 'published' | 'created'
 let allHotspots = [];
 let allOpportunities = [];
 let customTags = JSON.parse(localStorage.getItem('customTags') || '[]');
 let selectedTags = [];
 let selectedCategories = [];
 let selectedSource = 'all';
+let allSourceGroups = [];
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
@@ -34,15 +36,32 @@ function initializeEventListeners() {
     loadData();
   });
 
-  // 热点页面 - 来源筛选
-  document.querySelectorAll('#source-filters .filter-tag').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('#source-filters .filter-tag').forEach(b => b.classList.remove('active'));
+  // 日志页面
+  const logDateInput = document.getElementById('log-date');
+  const refreshLogsBtn = document.getElementById('refresh-logs');
+  if (logDateInput && refreshLogsBtn) {
+    logDateInput.addEventListener('change', loadCollectRuns);
+    refreshLogsBtn.addEventListener('click', loadCollectRuns);
+  }
+
+  // 设置页面
+  const saveBtn = document.getElementById('save-settings');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', saveSettings);
+  }
+
+  // 热点页面 - 来源筛选（动态重建时会重复绑定，所以用委托）
+  const sourceFilters = document.getElementById('source-filters');
+  if (sourceFilters) {
+    sourceFilters.addEventListener('click', (e) => {
+      const btn = e.target.closest('.filter-tag');
+      if (!btn) return;
+      sourceFilters.querySelectorAll('.filter-tag').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       selectedSource = btn.dataset.source;
       renderHotspots();
     });
-  });
+  }
 
   // 热点页面 - 排序
   document.getElementById('sort-select').addEventListener('change', renderHotspots);
@@ -75,6 +94,12 @@ function initializeEventListeners() {
   // 机会页面
   document.getElementById('add-opportunity').addEventListener('click', openOpportunityModal);
   document.getElementById('opportunities-search').addEventListener('input', renderOpportunities);
+
+  // 总览页面 - 日期口径切换
+  document.getElementById('date-field-select').addEventListener('change', (e) => {
+    currentDateField = e.target.value === 'created' ? 'created' : 'published';
+    loadData();
+  });
 
   // 总览页面 - 日期范围选择
   document.getElementById('date-range-select').addEventListener('change', (e) => {
@@ -120,6 +145,10 @@ function switchPage(page) {
     loadHotspots();
   } else if (page === 'opportunities') {
     loadOpportunities();
+  } else if (page === 'logs') {
+    loadCollectRuns();
+  } else if (page === 'settings') {
+    loadSettings();
   }
 }
 
@@ -135,15 +164,17 @@ let categoryChart = null;
 async function renderOverview() {
   try {
     // 加载汇总数据
+    const dateFieldParam = currentDateField === 'created' ? 'created_at' : 'published_at';
     const [summaryRes, trendRes] = await Promise.all([
-      fetch(`/api/summary?date=${currentDate}`),
-      fetch(`/api/trend?days=30`)
+      fetch(`/api/summary?date=${currentDate}&date_field=${dateFieldParam}`),
+      fetch(`/api/trend?days=30&date_field=${dateFieldParam}`)
     ]);
     const summary = await summaryRes.json();
     const trendData = await trendRes.json();
 
     // 更新统计卡片
     document.getElementById('total-hotspots').textContent = summary.hotspot_count || 0;
+    document.querySelector('#overview-page .stat-label').textContent = (currentDateField === 'created') ? '当日抓取' : '当日发布';
     document.getElementById('total-opportunities').textContent = summary.opportunity_count || 0;
     document.getElementById('total-sources').textContent = trendData.total_sources || 0;
 
@@ -249,9 +280,16 @@ function renderHeatmap(trend) {
 
 async function loadHotspots() {
   try {
-    const response = await fetch(`/api/hotspots?date=${currentDate}&limit=100&fill_missing=1`);
-    const data = await response.json();
+    const dateFieldParam = currentDateField === 'created' ? 'created_at' : 'published_at';
+    const [hotRes, groupRes] = await Promise.all([
+      fetch(`/api/hotspots?date=${currentDate}&date_field=${dateFieldParam}&limit=100&fill_missing=1`),
+      fetch(`/api/hotspots-source-groups?date=${currentDate}&date_field=${dateFieldParam}`)
+    ]);
+    const data = await hotRes.json();
+    const groups = await groupRes.json();
     allHotspots = data.hotspots || [];
+    allSourceGroups = groups.sources || [];
+    renderSourceFilters();
     renderTagFilters();
     renderHotspots();
   } catch (error) {
@@ -268,6 +306,107 @@ async function loadOpportunities() {
   } catch (error) {
     console.error('加载机会失败:', error);
   }
+}
+
+async function loadSettings() {
+  try {
+    const res = await fetch('/api/settings');
+    const data = await res.json();
+    const input = document.getElementById('deadline-hour');
+    if (input && data && data.ok) {
+      input.value = data.daily_deadline_hour;
+    }
+  } catch (e) {
+    console.error('加载设置失败:', e);
+  }
+}
+
+async function saveSettings() {
+  const input = document.getElementById('deadline-hour');
+  const status = document.getElementById('settings-status');
+  if (!input) return;
+  const hour = parseInt(input.value, 10);
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ daily_deadline_hour: hour })
+    });
+    const data = await res.json();
+    if (status) {
+      status.textContent = data.ok ? `已保存：${data.daily_deadline_hour} 点` : (data.error || '保存失败');
+      status.style.color = data.ok ? 'var(--color-success, #10b981)' : 'var(--color-danger, #ef4444)';
+    }
+  } catch (e) {
+    if (status) {
+      status.textContent = '保存失败';
+      status.style.color = 'var(--color-danger, #ef4444)';
+    }
+  }
+}
+
+async function loadCollectRuns() {
+  try {
+    const input = document.getElementById('log-date');
+    const date = input ? input.value : new Date().toISOString().split('T')[0];
+    const res = await fetch(`/api/collect-runs?limit=60`);
+    const data = await res.json();
+    const runs = data.runs || [];
+
+    // Find latest run for that day (by started_at)
+    const dayRuns = runs.filter(r => (r.started_at || '').slice(0, 10) === date);
+    dayRuns.sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
+    const run = dayRuns[0];
+
+    document.getElementById('log-items-total').textContent = run ? (run.hotspots_inserted || 0) : 0;
+    document.getElementById('log-items-new').textContent = run ? (run.items_new || 0) : 0;
+    document.getElementById('log-items-existing').textContent = run ? (run.items_existing || 0) : 0;
+
+    const breakdown = (run && run.date_breakdown) ? run.date_breakdown : [];
+    const container = document.getElementById('log-breakdown');
+    if (!container) return;
+    if (!run) {
+      container.innerHTML = '<div style="color:var(--color-text-secondary);">该日没有抓取记录</div>';
+      return;
+    }
+
+    container.innerHTML = breakdown.map(b => {
+      const d = b.content_date || '';
+      const c = b.item_count || 0;
+      return `<div style="display:flex; justify-content:space-between; padding: var(--space-sm) var(--space-md); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md);">
+        <div style="font-weight:600;">${escapeHtml(d)}</div>
+        <div style="color: var(--color-text-secondary);">${c} 篇</div>
+      </div>`;
+    }).join('');
+
+  } catch (e) {
+    console.error('加载抓取日志失败:', e);
+  }
+}
+
+function renderSourceFilters() {
+  const container = document.getElementById('source-filters');
+  if (!container) return;
+
+  const allCount = allSourceGroups.reduce((s, x) => s + (x.count || 0), 0);
+  const findCnt = (key) => {
+    if (key === 'twitter') return allSourceGroups.filter(x => (x.source || '').includes('twitter')).reduce((s,x)=>s+(x.count||0),0);
+    if (key === 'rss') return allSourceGroups.filter(x => (x.source || '').includes('http')).reduce((s,x)=>s+(x.count||0),0);
+    if (key === 'blog') return allSourceGroups.filter(x => (x.source || '').includes('blog')).reduce((s,x)=>s+(x.count||0),0);
+    return 0;
+  };
+
+  const buttons = [
+    { key: 'all', label: `全部 (${allCount})` },
+    { key: 'twitter', label: `🐦 Twitter (${findCnt('twitter')})` },
+    { key: 'rss', label: `📰 RSS (${findCnt('rss')})` },
+    { key: 'blog', label: `📝 博客 (${findCnt('blog')})` },
+  ];
+
+  container.innerHTML = buttons.map(b => {
+    const active = (selectedSource === b.key) ? 'active' : '';
+    return `<button class="filter-tag ${active}" data-source="${b.key}">${b.label}</button>`;
+  }).join('');
 }
 
 function renderHotspots() {

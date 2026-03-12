@@ -24,3 +24,15 @@ memory/
 tmp_*.txt
 scanner.db
 insight.db
+.insight_project_ok.txt
+findings.md
+progress.md
+task_plan.md
+IDENTITY.md
+SOUL.md
+USER.md
+TOOLS.md
+HEARTBEAT.md
+FINAL_STATUS.md
+skills/self-improving-agent/
+skills/ui-ux-pro-max/
