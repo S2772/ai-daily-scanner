@@ -303,7 +303,7 @@ class TwitterScraper:
 
         return all_tweets
 
-    def save_twitter_hotspot(self, item: Dict[str, Any]):
+    def save_twitter_hotspot(self, item: Dict[str, Any], *, generate_summary: bool = True):
         """保存Twitter热点到数据库"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -312,7 +312,9 @@ class TwitterScraper:
         scores = self._calculate_twitter_scores(item)
 
         # 生成 AI 摘要
-        ai_summary = self._generate_summary(item["title"], item["content"])
+        ai_summary = ""
+        if generate_summary:
+            ai_summary = self._generate_summary(item["title"], item["content"])
 
         cursor.execute('''
         INSERT OR REPLACE INTO hotspots
@@ -437,7 +439,7 @@ class TwitterScraper:
             "total_score": min(total_score, 10)
         }
 
-    def run_twitter_collection(self) -> int:
+    def run_twitter_collection(self, *, generate_summary: bool = False) -> int:
         """执行Twitter热点收集"""
         print("\n" + "="*50)
         print("🐦 开始收集Twitter AI热点...")
@@ -451,7 +453,7 @@ class TwitterScraper:
 
         # 保存所有推文
         for tweet in tweets:
-            self.save_twitter_hotspot(tweet)
+            self.save_twitter_hotspot(tweet, generate_summary=generate_summary)
 
         print(f"\n✓ 成功收集 {len(tweets)} 条Twitter推文")
         return len(tweets)

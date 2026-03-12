@@ -595,7 +595,165 @@ def _get_scheduler_config() -> SchedulerConfig:
     return SchedulerConfig(enabled=enabled, hour=hour)
 
 
+def _connect_db_path(db_path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _repair_stale_collect_runs(db_path: str, stale_after_seconds: int = 7200) -> int:
+    conn = _connect_db_path(db_path)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE collect_runs
+        SET finished_at = COALESCE(finished_at, CURRENT_TIMESTAMP),
+            status = 'partial',
+            notes = CASE
+                WHEN notes IS NULL OR trim(notes) = '' THEN 'recovered stale running collect'
+                WHEN instr(lower(notes), 'recovered stale running collect') > 0 THEN notes
+                ELSE substr(notes || '\nrecovered stale running collect', 1, 2000)
+            END
+        WHERE status = 'running'
+          AND finished_at IS NULL
+          AND started_at IS NOT NULL
+          AND (strftime('%s', datetime('now','localtime')) - strftime('%s', started_at)) >= ?
+        """,
+        (int(stale_after_seconds),),
+    )
+    repaired = int(cur.rowcount or 0)
+    conn.commit()
+    conn.close()
+    return repaired
+
+
+def _repair_stale_regen_jobs(db_path: str, stale_after_seconds: int = 7200) -> int:
+    conn = _connect_db_path(db_path)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE regen_summaries_jobs
+        SET finished_at = COALESCE(finished_at, CURRENT_TIMESTAMP),
+            status = 'interrupted',
+            error = CASE
+                WHEN status = 'queued' THEN CASE
+                    WHEN error IS NULL OR trim(error) = '' THEN 'recovered stale queued regen job'
+                    WHEN instr(lower(error), 'recovered stale queued regen job') > 0 THEN error
+                    ELSE substr(error || '\nrecovered stale queued regen job', 1, 2000)
+                END
+                ELSE CASE
+                    WHEN error IS NULL OR trim(error) = '' THEN 'recovered stale running regen job'
+                    WHEN instr(lower(error), 'recovered stale running regen job') > 0 THEN error
+                    ELSE substr(error || '\nrecovered stale running regen job', 1, 2000)
+                END
+            END
+        WHERE status IN ('running', 'queued')
+          AND finished_at IS NULL
+          AND COALESCE(started_at, created_at) IS NOT NULL
+          AND (strftime('%s', datetime('now','localtime')) - strftime('%s', COALESCE(started_at, created_at))) >= ?
+        """,
+        (int(stale_after_seconds),),
+    )
+    repaired = int(cur.rowcount or 0)
+    conn.commit()
+    conn.close()
+    return repaired
+
+
+def _start_regen_summaries_job(job_key: Optional[str] = None, batch_limit: int = 40) -> Dict[str, Any]:
+    job_key = (job_key or datetime.now().strftime("%Y-%m-%d")).strip()
+    batch_limit = max(1, min(200, int(batch_limit)))
+    _repair_stale_regen_jobs(DB_PATH)
+
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT OR IGNORE INTO regen_summaries_jobs(job_key,status,batch_limit) VALUES(?,?,?)",
+        (job_key, "queued", int(batch_limit)),
+    )
+    cur.execute(
+        "SELECT job_key, status, total, processed, updated, failed, batch_limit, error, created_at, started_at, finished_at FROM regen_summaries_jobs WHERE job_key = ? LIMIT 1",
+        (job_key,),
+    )
+    row = cur.fetchone()
+    job = dict(row) if row else {"job_key": job_key, "status": "queued", "batch_limit": int(batch_limit)}
+    status = str(job.get("status") or "queued")
+
+    if status != "running":
+        cur.execute(
+            "UPDATE regen_summaries_jobs SET status='queued', error=NULL, total=0, processed=0, updated=0, failed=0, started_at=NULL, finished_at=NULL, batch_limit=? WHERE job_key=?",
+            (int(batch_limit), job_key),
+        )
+        conn.commit()
+        conn.close()
+
+        def _bg() -> None:
+            try:
+                _regen_summaries_job(job_key=job_key, batch_limit=int(batch_limit))
+            except Exception as exc:
+                conn2 = connect_db()
+                cur2 = conn2.cursor()
+                cur2.execute(
+                    "UPDATE regen_summaries_jobs SET status='interrupted', error=?, finished_at=CURRENT_TIMESTAMP WHERE job_key=?",
+                    (str(exc)[:2000], job_key),
+                )
+                conn2.commit()
+                conn2.close()
+
+        threading.Thread(target=_bg, daemon=True).start()
+        return {"job_key": job_key, "status": "queued", "batch_limit": int(batch_limit)}
+
+    conn.close()
+    return job
+
+
+def _maybe_enqueue_regen_after_collect(db_path: str, run_id: int) -> Optional[Dict[str, Any]]:
+    conn = _connect_db_path(db_path)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, started_at, status, hotspots_inserted, items_total, items_new, items_existing
+        FROM collect_runs
+        WHERE id = ?
+        LIMIT 1
+        """,
+        (run_id,),
+    )
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    if str(row["status"] or "") not in {"success", "partial"}:
+        return None
+
+    candidate_count = max(
+        int(row["hotspots_inserted"] or 0),
+        int(row["items_total"] or 0),
+        int(row["items_new"] or 0) + int(row["items_existing"] or 0),
+    )
+    if candidate_count <= 0:
+        return None
+
+    try:
+        batch_limit = max(20, min(200, int(os.getenv("AUTO_REGEN_SUMMARIES_LIMIT", "120"))))
+    except ValueError:
+        batch_limit = 120
+    started_at = str(row["started_at"] or "").strip()
+    job_key = started_at[:10] if len(started_at) >= 10 else datetime.now().strftime("%Y-%m-%d")
+    return _start_regen_summaries_job(job_key=job_key, batch_limit=batch_limit)
+
+
+def _run_collect_job_with_postprocess(db_path: str, run_id: int) -> None:
+    run_collect_job(db_path, run_id)
+    _maybe_enqueue_regen_after_collect(db_path, run_id)
+
+
 def _create_collect_run_and_start(db_path: str, *, reason: str) -> int:
+    _repair_stale_collect_runs(db_path)
+    _repair_stale_regen_jobs(db_path)
     started_at = datetime.now()
     conn = connect_db()
     cursor = conn.cursor()
@@ -610,7 +768,7 @@ def _create_collect_run_and_start(db_path: str, *, reason: str) -> int:
     conn.commit()
     conn.close()
 
-    t = threading.Thread(target=run_collect_job, args=(db_path, run_id), daemon=True)
+    t = threading.Thread(target=_run_collect_job_with_postprocess, args=(db_path, run_id), daemon=True)
     t.start()
     return run_id
 
@@ -1886,129 +2044,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception:
             batch_limit = 40
 
-        job_key = datetime.now().strftime("%Y-%m-%d")
-
-        conn = connect_db()
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT OR IGNORE INTO regen_summaries_jobs(job_key,status,batch_limit) VALUES(?,?,?)",
-            (job_key, "queued", int(batch_limit)),
-        )
-        cur.execute(
-            "SELECT job_key, status, total, processed, updated, failed, batch_limit, error, created_at, started_at, finished_at FROM regen_summaries_jobs WHERE job_key = ? LIMIT 1",
-            (job_key,),
-        )
-        row = cur.fetchone()
-        conn.commit()
-        conn.close()
-
-        job = dict(row) if row else {"job_key": job_key, "status": "queued"}
-        status = str(job.get("status") or "queued")
-
-        if status in {"queued", "running"}:
-            if status != "running":
-                def _bg() -> None:
-                    try:
-                        workers = 2
-                        # update total first (same selection)
-                        conn2 = connect_db()
-                        cur2 = conn2.cursor()
-                        cur2.execute(
-                            """
-                            SELECT COUNT(*) AS cnt
-                            FROM (
-                              SELECT 1
-                              FROM hotspots
-                              WHERE (
-                                  ai_summary IS NULL
-                                  OR ai_summary = ''
-                                  OR ai_summary LIKE '[PENDING]%'
-                                  OR ai_summary LIKE 'API错误:%'
-                                  OR ai_summary LIKE '生成失败:%'
-                                  OR ai_summary LIKE '%AI摘要服务暂时繁忙%'
-                                  OR title_zh IS NULL
-                                  OR title_zh = ''
-                              )
-                              AND (
-                                  (content IS NOT NULL AND length(content) > 20)
-                                  OR (title IS NOT NULL AND title != '')
-                              )
-                              ORDER BY created_at DESC
-                              LIMIT ?
-                            )
-                            """,
-                            (int(batch_limit),),
-                        )
-                        total_row = cur2.fetchone()
-                        total = int(total_row["cnt"] if total_row else 0)
-                        cur2.execute("UPDATE regen_summaries_jobs SET total=? WHERE job_key=?", (total, job_key))
-                        conn2.commit()
-                        conn2.close()
-
-                        results: List[Tuple[int, int, int]] = []
-                        threads: List[threading.Thread] = []
-
-                        def run_worker(i: int) -> None:
-                            results.append(_regen_summaries_worker(job_key, int(batch_limit), i, workers))
-
-                        for i in range(workers):
-                            t = threading.Thread(target=run_worker, args=(i,), daemon=True)
-                            threads.append(t)
-                            t.start()
-
-                        processed = updated = failed = 0
-                        while True:
-                            alive = any(t.is_alive() for t in threads)
-                            processed = sum(r[0] for r in results)
-                            updated = sum(r[1] for r in results)
-                            failed = sum(r[2] for r in results)
-
-                            connp = connect_db()
-                            curp = connp.cursor()
-                            curp.execute(
-                                "UPDATE regen_summaries_jobs SET processed=?, updated=?, failed=? WHERE job_key=?",
-                                (processed, updated, failed, job_key),
-                            )
-                            connp.commit()
-                            connp.close()
-
-                            if not alive:
-                                break
-                            time.sleep(2)
-
-                        connf = connect_db()
-                        curf = connf.cursor()
-                        curf.execute(
-                            "UPDATE regen_summaries_jobs SET processed=?, updated=?, failed=?, status='finished', finished_at=CURRENT_TIMESTAMP WHERE job_key=?",
-                            (processed, updated, failed, job_key),
-                        )
-                        connf.commit()
-                        connf.close()
-                    except Exception:
-                        pass
-
-                threading.Thread(target=_bg, daemon=True).start()
-
-            json_response(self, HTTPStatus.OK, {"ok": True, **job})
-            return
-
-        conn = connect_db()
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE regen_summaries_jobs SET status='queued', error=NULL, total=0, processed=0, updated=0, failed=0, started_at=NULL, finished_at=NULL, batch_limit=? WHERE job_key=?",
-            (int(batch_limit), job_key),
-        )
-        conn.commit()
-        conn.close()
-
-        def _bg2() -> None:
-            try:
-                _regen_summaries_job(job_key=job_key, batch_limit=int(batch_limit))
-            except Exception:
-                pass
-
-        threading.Thread(target=_bg2, daemon=True).start()
-        json_response(self, HTTPStatus.OK, {"ok": True, "job_key": job_key, "status": "queued", "batch_limit": int(batch_limit)})
+        job = _start_regen_summaries_job(batch_limit=int(batch_limit))
+        json_response(self, HTTPStatus.OK, {"ok": True, **job})
 
 
     def handle_regen_summaries_progress(self) -> None:

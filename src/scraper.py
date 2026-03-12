@@ -852,7 +852,7 @@ class AIScraper:
             item.get("category", "市场机会"),
         )
     
-    def save_hotspot(self, item: Dict[str, Any]):
+    def save_hotspot(self, item: Dict[str, Any], *, generate_summary: bool = True):
         """保存热点信息到数据库"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -860,7 +860,7 @@ class AIScraper:
         # 优先使用抓取阶段已计算的详细评分，避免被旧逻辑覆盖
         scores = self._resolve_scores(item)
         ai_summary = str(item.get("ai_summary") or "").strip()
-        if not ai_summary:
+        if generate_summary and not ai_summary:
             ai_summary = self._generate_ai_summary(item.get("title", ""), item.get("content", ""))
         title_zh = str(item.get("title_zh") or item.get("title") or "").strip()
         
@@ -919,7 +919,7 @@ class AIScraper:
         cursor.execute(
             """
             DELETE FROM opportunities
-            WHERE date(created_at) = date('now') AND id LIKE 'auto_%'
+            WHERE date(created_at) = date('now', 'localtime') AND id LIKE 'auto_%'
             """
         )
 
@@ -931,7 +931,7 @@ class AIScraper:
                GROUP_CONCAT(title, '|') as titles,
                GROUP_CONCAT(content, '|') as contents
         FROM hotspots
-        WHERE date(created_at) = date('now')
+        WHERE date(created_at) = date('now', 'localtime')
         GROUP BY category, tags
         ORDER BY avg_commercial DESC, avg_investment DESC
         LIMIT 10
@@ -1138,7 +1138,7 @@ class AIScraper:
         # 保存所有热点（RSS的）
         for item in all_items:
             if "id" in item and not item["id"].startswith("twitter_"):
-                self.save_hotspot(item)
+                self.save_hotspot(item, generate_summary=False)
 
         # 识别机会
         opportunities = self.identify_opportunities()

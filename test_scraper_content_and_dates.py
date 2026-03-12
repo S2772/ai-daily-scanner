@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from src.scraper import AIScraper
+from src.twitter_scraper import TwitterScraper
 
 
 class ScraperContentAndDatesTest(unittest.TestCase):
@@ -40,6 +41,57 @@ class ScraperContentAndDatesTest(unittest.TestCase):
         self.assertIsNotNone(row)
         self.assertNotEqual((row[0] or '').strip(), '')
         self.assertEqual(row[1], '2026-03-11 08:01:02')
+
+    def test_save_hotspot_can_skip_ai_summary_generation_for_collect_path(self):
+        item = {
+            'id': 'x2',
+            'title': 'Test title',
+            'content': 'A long enough body for testing summary bypass.' * 4,
+            'url': 'https://example.com/post-2',
+            'source': 'https://example.com/feed',
+            'category': '产品发布',
+            'tags': '[]',
+            'innovation_score': 1,
+            'commercial_score': 2,
+            'tech_score': 3,
+            'investment_score': 4,
+            'total_score': 5,
+        }
+
+        with patch.object(self.scraper, '_generate_ai_summary', side_effect=AssertionError('should not be called')):
+            self.scraper.save_hotspot(item, generate_summary=False)
+
+        import sqlite3
+        conn = sqlite3.connect(self.tmp.name)
+        row = conn.execute("SELECT ai_summary FROM hotspots WHERE id='x2'").fetchone()
+        conn.close()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0] or '', '')
+
+    def test_save_twitter_hotspot_can_skip_ai_summary_generation_for_collect_path(self):
+        twitter = TwitterScraper(self.tmp.name)
+        item = {
+            'id': 'tw1',
+            'title': 'Twitter title',
+            'content': 'Long enough tweet content for bypass testing.' * 4,
+            'url': 'https://twitter.com/example/status/1',
+            'source': 'Twitter/@example',
+            'category': '产品发布',
+            'tags': '[]',
+            'engagement': 0,
+        }
+
+        with patch.object(twitter, '_generate_summary', side_effect=AssertionError('should not be called')):
+            twitter.save_twitter_hotspot(item, generate_summary=False)
+
+        import sqlite3
+        conn = sqlite3.connect(self.tmp.name)
+        row = conn.execute("SELECT ai_summary FROM hotspots WHERE id='tw1'").fetchone()
+        conn.close()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0] or '', '')
 
     def test_parse_rss_backfills_short_sspai_summary_with_article_content(self):
         feed = b'''<?xml version="1.0" encoding="UTF-8"?>
@@ -80,6 +132,64 @@ class ScraperContentAndDatesTest(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertGreater(len(items[0]['content']), 500)
         self.assertEqual(items[0]['published_at'], '2026-03-11 03:35:39')
+
+    def test_identify_opportunities_uses_localtime_for_today_window(self):
+        import sqlite3
+
+        conn = sqlite3.connect(self.tmp.name)
+        conn.execute(
+            """
+            INSERT INTO hotspots (
+                id, title, content, url, source, category, tags,
+                innovation_score, commercial_score, tech_score, investment_score, total_score,
+                created_at, published_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+            """,
+            (
+                'today_local_1',
+                '本地时间热点一',
+                'A' * 200,
+                'https://example.com/local-1',
+                'feed',
+                '产品发布',
+                '["AI","SaaS"]',
+                1,
+                8,
+                2,
+                7,
+                18,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO hotspots (
+                id, title, content, url, source, category, tags,
+                innovation_score, commercial_score, tech_score, investment_score, total_score,
+                created_at, published_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
+            """,
+            (
+                'today_local_2',
+                '本地时间热点二',
+                'B' * 200,
+                'https://example.com/local-2',
+                'feed',
+                '产品发布',
+                '["AI","SaaS"]',
+                2,
+                7,
+                3,
+                6,
+                18,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        opportunities = self.scraper.identify_opportunities()
+
+        self.assertEqual(len(opportunities), 1)
+        self.assertEqual(opportunities[0]['category'], '产品发布')
 
 
 if __name__ == '__main__':
